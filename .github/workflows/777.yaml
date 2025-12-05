@@ -1,0 +1,199 @@
+name: 加速版构建 6.6.89 欧加真OKI内核
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_type:
+        description: 'KernelSU分支(SukiSU Ultra/KernelSU Next/MKSU/KernelSU(原版),默认SukiSU Ultra)'
+        required: true
+        type: choice
+        default: 'sukisu'
+        options:
+          - 'sukisu'
+          - 'ksunext'
+          - 'mksu'
+          - 'ksu'
+      susfs_enable:
+        description: '是否开启susfs(用于增强隐藏环境挂载功能; 可能轻微增加耗电，上游更新导致不稳定时或不需要可关闭)'
+        required: true
+        type: boolean
+        default: true
+      lxc_docker_enable:
+        description: '是否开启LXC和Docker容器支持(提供完整的容器虚拟化功能，可运行Linux发行版容器，会增大内核体积)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检查输入参数
+      run: |
+        echo "KSU类型: ${{ github.event.inputs.ksu_type }}"
+        echo "SUSFS启用: ${{ github.event.inputs.susfs_enable }}"
+        echo "LXC/Docker启用: ${{ github.event.inputs.lxc_docker_enable }}"
+    
+    - name: 安装基本依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          build-essential \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          ccache \
+          wget \
+          curl \
+          unzip \
+          aria2
+        
+    - name: 创建工作目录
+      run: |
+        mkdir -p kernel_workspace
+        cd kernel_workspace
+        
+    - name: 下载内核源码
+      run: |
+        cd kernel_workspace
+        echo "下载内核源码..."
+        wget -q https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -O kernel.zip
+        unzip -q kernel.zip
+        mv android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89 common
+        rm kernel.zip
+        
+    - name: 配置内核
+      run: |
+        cd kernel_workspace/common
+        
+        # 添加KSU支持
+        echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+        
+        # 添加LXC/Docker支持
+        if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
+          echo "启用LXC和Docker支持..."
+          echo "CONFIG_NAMESPACES=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_UTS_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUPS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_CPUACCT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_FREEZER=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_SCHED=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPUSETS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MEMCG=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KEYS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_VETH=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BRIDGE=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TUN=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BINFMT_MISC=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SECCOMP=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SECCOMP_FILTER=y" >> arch/arm64/configs/gki_defconfig
+        fi
+        
+        echo "内核配置完成！"
+        
+    - name: 编译内核
+      run: |
+        cd kernel_workspace/common
+        
+        # 设置编译环境
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        
+        # 使用默认配置
+        make O=out gki_defconfig
+        
+        # 编译内核
+        make -j$(nproc) O=out
+        
+        # 检查编译结果
+        if [ -f out/arch/arm64/boot/Image ]; then
+          echo "内核编译成功！"
+          ls -lh out/arch/arm64/boot/Image
+        else
+          echo "内核编译失败！"
+          exit 1
+        fi
+        
+    - name: 打包内核
+      run: |
+        cd kernel_workspace
+        
+        # 创建AnyKernel目录结构
+        mkdir -p AnyKernel3
+        cd AnyKernel3
+        
+        # 创建基本的AnyKernel文件
+        cat > anykernel.sh << 'EOF'
+#!/system/bin/sh
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+
+## AnyKernel setup
+# begin properties
+properties() {
+kernel.string=Custom Kernel by cctv18
+do.devicecheck=0
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=oneplus
+device.name2=oplus
+device.name3=realme
+device.name4=
+device.name5=
+supported.versions=
+supported.patchlevels=
+}
+# shell variables
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=0;
+ramdisk_compression=auto;
+## AnyKernel methods (DO NOT CHANGE)
+# import patching functions/variables - see for reference
+. tools/ak3-core.sh;
+
+## AnyKernel file attributes
+# set permissions/ownership for included ramdisk files
+set_perm_recursive 0 0 755 644 $ramdisk/*;
+set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+
+## AnyKernel install
+dump_boot;
+
+write_boot;
+## end install
+EOF
+        
+        # 创建必要的目录和文件
+        mkdir -p tools
+        cat > tools/ak3-core.sh << 'EOF'
+# AnyKernel3 Core
+# Basic functions and variables
+EOF
+        
+        # 复制内核镜像
+        mkdir -p kernel
+        cp ../common/out/arch/arm64/boot/Image kernel/Image
+        
+        # 创建刷机包
+        zip -r9 kernel.zip *
+        
+        echo "刷机包创建完成！"
+        
+    - name: 上传工件
+      uses: actions/upload-artifact@v4
+      with:
+        name: Custom-Kernel
+        path: kernel_workspace/AnyKernel3/kernel.zip

@@ -592,7 +592,7 @@ jobs:
           echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CPUSETS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KEYS=y" >> ./common/arm64/configs/gki_defconfig
+          echo "CONFIG_KEYS=y" >> ./common/arch/arm64/configs/gki_defconfig
           
           # Cgroup 控制器
           echo "CONFIG_CGROUP_NET_PRIO=y" >> ./common/arch/arm64/configs/gki_defconfig

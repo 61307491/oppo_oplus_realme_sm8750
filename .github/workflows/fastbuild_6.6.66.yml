@@ -9,6 +9,14 @@ env:
 on:
   workflow_dispatch:
     inputs:
+      kernel_source:
+        description: '选择内核源码仓库'
+        required: true
+        type: choice
+        default: 'default'
+        options:
+          - 'default'  # 默认源码
+          - 'docker_optimized'  # Docker优化版本
       ksu_type:
         description: 'KernelSU分支(SukiSU Ultra/KernelSU Next/MKSU/KernelSU(原版),默认SukiSU Ultra)'
         required: true
@@ -19,6 +27,11 @@ on:
           - 'ksunext'
           - 'mksu'
           - 'ksu'
+      lxc_docker_enable:
+        description: '是否启用LXC和Docker支持(需要开启对应的内核配置，可能会破坏KMI)'
+        required: true
+        type: boolean
+        default: 'false'
       susfs_enable:
         description: '是否开启susfs(用于增强隐藏环境挂载功能; 可能轻微增加耗电，上游更新导致不稳定时或不需要可关闭)'
         required: true
@@ -103,14 +116,6 @@ jobs:
           sudo rm -rf /var/lib/man-db/auto-update &&
           sudo apt update &&
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
-          #旧版完整指令：（由于经过验证大部分指令已内置于GitHub Action环境中，故进行精简）
-          #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
-          
-          echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
-          unzip -q common.zip && 
-          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66" common &&
-          rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&
           mkdir -p clang18 &&
@@ -122,6 +127,25 @@ jobs:
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip &&
           unzip -q build-tools.zip &&
           rm -rf build-tools.zip &
+          
+          wait
+          
+          echo "正在克隆内核源码仓库..."
+          if [[ "${{ github.event.inputs.kernel_source }}" == "docker_optimized" ]]; then
+            echo "使用Docker优化版本内核源码..."
+            aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66_docker.zip -o common.zip
+          else
+            echo "使用默认内核源码..."
+            aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip
+          fi
+          
+          unzip -q common.zip && 
+          if [[ "${{ github.event.inputs.kernel_source }}" == "docker_optimized" ]]; then
+            mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66_docker" common
+          else
+            mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66" common
+          fi
+          rm -rf common.zip &
           
           wait
           echo "所有源码及llvm-Clang18工具链初始化完成！"
@@ -397,6 +421,96 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
+          
+      - name: 配置LXC和Docker支持
+        if: inputs.lxc_docker_enable
+        run: |
+          echo "正在配置LXC和Docker支持..."
+          cd kernel_workspace
+          
+          # 如果使用的是默认内核源码，需要应用Docker补丁
+          if [[ "${{ github.event.inputs.kernel_source }}" == "default" ]]; then
+            echo "正在应用Docker支持补丁到默认内核源码..."
+            
+            # 克隆Docker补丁仓库
+            git clone https://github.com/cctv18/android_kernel_docker_patches.git docker_patches
+            
+            # 应用LXC/Docker基础补丁
+            cd common
+            for patch_file in ../docker_patches/patches/*.patch; do
+              echo "应用补丁: $(basename $patch_file)"
+              patch -p1 -N -F 3 < "$patch_file" || echo "补丁可能已应用或存在冲突: $(basename $patch_file)"
+            done
+            
+            # 应用KMI安全补丁 - 使用KABI预留字段
+            cd ../docker_patches/kmi-safe-patches
+            for patch_file in *.patch; do
+              echo "应用KMI安全补丁: $(basename $patch_file)"
+              patch -p1 -N -F 3 < "$patch_file" || echo "KMI补丁可能已应用或存在冲突: $(basename $patch_file)"
+            done
+            
+            cd ../..
+          fi
+          
+          echo "正在启用Docker所需的内核配置..."
+          
+          # 基础容器支持
+          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUPS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPUSETS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # Docker必需配置
+          echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BRIDGE_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_IPVS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NF_NAT_IPV4=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NF_NAT_IPV6=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # 文件系统支持
+          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_XINO_AUTO=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_METACOPY=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # 用户命名空间支持
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # 检查KMI兼容性
+          echo "正在检查KMI兼容性..."
+          cd common
+          if [ -f "android/abi_gki_aarch64.xml" ]; then
+            echo "发现KMI定义文件，检查可能破坏KMI的配置..."
+            
+            # 检查CONFIG_SYSVIPC是否会影响冻结的结构体
+            if grep -q "CONFIG_SYSVIPC" arch/arm64/configs/gki_defconfig; then
+              echo "警告: CONFIG_SYSVIPC已启用，可能会影响task_struct布局"
+              echo "建议检查android/abi_gki_aarch64.xml中task_struct是否被冻结"
+            fi
+            
+            # 列出所有可能影响冻结结构体的配置
+            echo "检查完成。请注意：启用LXC/Docker支持可能会破坏KMI，导致预编译模块无法加载。"
+          fi
           
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
@@ -767,6 +881,12 @@ jobs:
             KSU_TYPENAME="KSU"
           fi
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
+          if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
+            echo "LXC_DOCKER_ENABLED=true" >> $GITHUB_ENV
+          fi
+          if [[ "${{ github.event.inputs.kernel_source }}" == "docker_optimized" ]]; then
+            echo "KERNEL_SOURCE=docker_optimized" >> $GITHUB_ENV
+          fi
          
       - name: 创建发布
         id: create_release
@@ -780,6 +900,8 @@ jobs:
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
             - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
+            - 内核源码: ${{ github.event.inputs.kernel_source == 'docker_optimized' && 'Docker优化版本' || '默认版本' }}
+            - LXC/Docker支持: ${{ github.event.inputs.lxc_docker_enable }}
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -789,13 +911,14 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
-            - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
-            - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
-            - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
-            ### ⏫️ 更新内容：
-            - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - (预留)
+            
+            ${{ github.event.inputs.lxc_docker_enable && '### 🐳 LXC/Docker 支持说明' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '**重要警告**：启用LXC/Docker支持可能会破坏KMI（内核模块接口），导致以下后果：' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '- 手机厂商预编译的驱动模块可能无法加载' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '- 可能导致无法开机或启动循环（bootloop）' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '- 仅在您了解风险并需要容器功能时启用' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '' || '' }}
+            
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；
@@ -803,6 +926,14 @@ jobs:
             4. 刷入无lz4kd补丁版的内核前若刷入过lz4kd补丁版的内核，为避免出错，请先关闭zram模块；
             5. 由于KernelSU上游更新了元模块功能，最新版KSU管理器（包括除KernelSU Next以外的各分支）需要配合元模块(metamodule)才能正常挂载模块。目前的元模块包括[meta overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs), [mountify](https://github.com/backslashxx/mountify), [meta magicmount](https://github.com/7a72/meta-magic_mount/), [meta magicmount rs](https://github.com/Tools-cx-app/meta-magic_mount/), [hybrid mount](https://github.com/YuzakiKokuban/meta-hybrid_mount)等。若你是第一次使用KSU或刚从旧版KSU管理器升级至新版，请先安装一个元模块，这样其他涉及系统挂载的模块才能正常运行。
             #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher](https://github.com/capntrips/KernelFlasher)等软件备份boot等关键启动分区!※※※
+            
+            ${{ github.event.inputs.lxc_docker_enable && '#### 🐳 Docker使用说明' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '若已启用LXC/Docker支持，可在Termux中安装Docker：' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '```bash' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && 'pkg install docker' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '# 启动Docker守护进程' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && 'dockerd &' || '' }}
+            ${{ github.event.inputs.lxc_docker_enable && '```' || '' }}
           draft: false
           prerelease: false
           files: |

@@ -497,6 +497,41 @@ jobs:
       - name: 配置Docker OverlayFS2驱动
         if: inputs.docker_overlayfs && inputs.lxc_docker_enable
         run: |
+- name: 为LXC配置cgroup支持
+  if: inputs.lxc_docker_enable
+  run: |
+    echo "正在为LXC配置cgroup支持..."
+    cd kernel_workspace/common
+
+    # 1. 启用cgroup核心支持
+    echo "CONFIG_CGROUPS=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_MEMCG=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_SCHED=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_BLK_CGROUP=y" >> ./arch/arm64/configs/gki_defconfig
+
+    # 2. 启用cgroup v1控制器 (部分LXC/LXD工具链依赖)
+    echo "CONFIG_CGROUP_FREEZER=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_PIDS=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_DEVICE=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_CPUACCT=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_PERF=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_HUGETLB=y" >> ./arch/arm64/configs/gki_defconfig
+
+    # 3. 启用cgroup v2支持（现代LXC/LXD和Docker推荐）
+    # 对于内核版本6.6.66，cgroup v2通常是默认或建议启用的
+    echo "CONFIG_CGROUP_V2=y" >> ./arch/arm64/configs/gki_defconfig
+
+    # 4. 启用cpuset控制器 (用于CPU和内存节点绑定，对容器性能隔离很重要)
+    echo "CONFIG_CPUSETS=y" >> ./arch/arm64/configs/gki_defconfig
+
+    # 5. 启用cgroup命名空间支持 (增强容器隔离性)
+    echo "CONFIG_CGROUP_NS=y" >> ./arch/arm64/configs/gki_defconfig
+
+    # 6. 启用其他可能需要的资源控制器
+    echo "CONFIG_NET_CLS_CGROUP=y" >> ./arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NETFILTER_XT_MATCH_CGROUP=m" >> ./arch/arm64/configs/gki_defconfig
+
+    echo "LXC cgroup支持配置已完成。"
           echo "正在配置Docker OverlayFS2驱动支持..."
           cd kernel_workspace
           

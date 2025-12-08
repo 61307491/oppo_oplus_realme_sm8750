@@ -422,96 +422,89 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
           
-      - name: 配置LXC和Docker支持
-        if: inputs.lxc_docker_enable
-        run: |
-          echo "正在配置LXC和Docker支持..."
-          cd kernel_workspace
-          
-          # 如果使用的是默认内核源码，需要应用Docker补丁
-          if [[ "${{ github.event.inputs.kernel_source }}" == "default" ]]; then
-            echo "正在应用Docker支持补丁到默认内核源码..."
-            
-            # 克隆Docker补丁仓库
-            git clone https://github.com/cctv18/android_kernel_docker_patches.git docker_patches
-            
-            # 应用LXC/Docker基础补丁
-            cd common
-            for patch_file in ../docker_patches/patches/*.patch; do
-              echo "应用补丁: $(basename $patch_file)"
-              patch -p1 -N -F 3 < "$patch_file" || echo "补丁可能已应用或存在冲突: $(basename $patch_file)"
-            done
-            
-            # 应用KMI安全补丁 - 使用KABI预留字段
-            cd ../docker_patches/kmi-safe-patches
-            for patch_file in *.patch; do
-              echo "应用KMI安全补丁: $(basename $patch_file)"
-              patch -p1 -N -F 3 < "$patch_file" || echo "KMI补丁可能已应用或存在冲突: $(basename $patch_file)"
-            done
-            
-            cd ../..
-          fi
-          
-          echo "正在启用Docker所需的内核配置..."
-          
-          # 基础容器支持
-          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUPS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CPUSETS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # Docker必需配置
-          echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_BRIDGE_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_MATCH_IPVS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NF_NAT_IPV4=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NF_NAT_IPV6=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # 文件系统支持
-          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS_XINO_AUTO=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS_METACOPY=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # 用户命名空间支持
-          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # 检查KMI兼容性
-          echo "正在检查KMI兼容性..."
-          cd common
-          if [ -f "android/abi_gki_aarch64.xml" ]; then
-            echo "发现KMI定义文件，检查可能破坏KMI的配置..."
-            
-            # 检查CONFIG_SYSVIPC是否会影响冻结的结构体
-            if grep -q "CONFIG_SYSVIPC" arch/arm64/configs/gki_defconfig; then
-              echo "警告: CONFIG_SYSVIPC已启用，可能会影响task_struct布局"
-              echo "建议检查android/abi_gki_aarch64.xml中task_struct是否被冻结"
-            fi
-            
-            # 列出所有可能影响冻结结构体的配置
-            echo "检查完成。请注意：启用LXC/Docker支持可能会破坏KMI，导致预编译模块无法加载。"
-          fi
-          
+      
+- name: 配置LXC和Docker支持
+  if: inputs.lxc_docker_enable
+  run: |
+    echo "正在配置LXC和Docker支持..."
+    cd kernel_workspace
+    
+    # 仅默认源码需要应用Docker补丁
+    if [[ "${{ github.event.inputs.kernel_source }}" == "default" ]]; then
+      echo "正在应用Docker支持补丁到默认内核源码..."
+      git clone https://github.com/cctv18/android_kernel_docker_patches.git docker_patches
+      
+      cd common
+      for patch_file in ../docker_patches/patches/*.patch; do
+        echo "应用补丁: $(basename $patch_file)"
+        patch -p1 -N -F 3 < "$patch_file" || echo "补丁可能已应用或存在冲突: $(basename $patch_file)"
+      done
+      
+      cd ../docker_patches/kmi-safe-patches
+      for patch_file in *.patch; do
+        echo "应用KMI安全补丁: $(basename $patch_file)"
+        patch -p1 -N -F 3 < "$patch_file" || echo "KMI补丁可能已应用或存在冲突: $(basename $patch_file)"
+      done
+      cd ../..
+    fi
+    
+    echo "正在启用Docker所需的内核配置..."
+    
+    # 基础容器支持配置
+    echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUPS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_CPUSETS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
+    
+    # Docker核心网络配置
+    echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_BRIDGE_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NETFILTER_XT_MATCH_IPVS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_IP_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_IP_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NF_NAT_IPV4=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_NF_NAT_IPV6=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
+    
+    # OverlayFS文件系统支持
+    echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_OVERLAY_FS_XINO_AUTO=y" >> ./common/arch/arm64/configs/gki_defconfig
+    echo "CONFIG_OVERLAY_FS_METACOPY=y" >> ./common/arch/arm64/configs/gki_defconfig
+    
+    # 用户命名空间支持
+    echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+    
+    # KMI兼容性检查
+    echo "正在检查KMI兼容性..."
+    cd common
+    if [ -f "android/abi_gki_aarch64.xml" ]; then
+      echo "发现KMI定义文件，检查可能破坏KMI的配置..."
+      
+      if grep -q "CONFIG_SYSVIPC" arch/arm64/configs/gki_defconfig; then
+        echo "警告: CONFIG_SYSVIPC已启用，可能会影响task_struct布局"
+        echo "建议检查android/abi_gki_aarch64.xml中task_struct是否被冻结"
+      fi
+      
+      echo "检查完成。请注意：启用LXC/Docker支持可能会破坏KMI，导致预编译模块无法加载。"
+    f
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |

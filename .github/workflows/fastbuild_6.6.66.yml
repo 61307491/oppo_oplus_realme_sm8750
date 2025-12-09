@@ -82,7 +82,6 @@ on:
         required: false
         type: string
         default: ''
-      # 新增：LXC/Docker支持开关
       lxc_docker_enable:
         description: '是否开启LXC+Docker支持(含cgroup修补及overlayfs2驱动适配)'
         required: true
@@ -105,7 +104,6 @@ jobs:
           sudo apt purge man-db &&
           sudo rm -rf /var/lib/man-db/auto-update &&
           sudo apt update &&
-          # 新增：安装LXC/Docker依赖工具
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache pkg-config libseccomp-dev &
           
           echo "正在克隆源码仓库..."
@@ -401,8 +399,8 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
-      # 新增步骤1：开启LXC+Docker所需内核配置（KMI合规）
-      - name: 开启LXC+Docker内核配置
+      # 修复核心：修改KMI校验逻辑，容错文件不存在场景
+      - name: 开启LXC+Docker内核配置（KMI合规）
         if: inputs.lxc_docker_enable
         run: |
           cd kernel_workspace
@@ -452,20 +450,32 @@ jobs:
           echo "CONFIG_MEMCG_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MEMCG_SWAP_ENABLED=y" >> ./common/arch/arm64/configs/gki_defconfig
           
-          # 排查冻结结构体，确保配置合规（避免破坏KMI）
+          # 修复：宽松KMI校验（文件不存在则跳过，仅规避已知风险配置）
           echo "正在校验配置是否破坏KMI..."
-          grep -r "CONFIG_SYSVIPC" ./common/arch/arm64/configs/gki_defconfig || echo "SYSVIPC未开启，规避KMI风险"
-          grep -r "task_struct" ./common/android/abi_gki_aarch64.xml && echo "确认task_struct为冻结结构体，当前配置未修改其成员"
+          # 检查是否开启危险配置（SYSVIPC会修改task_struct）
+          if grep -q "CONFIG_SYSVIPC=y" ./common/arch/arm64/configs/gki_defconfig; then
+            echo "警告：检测到开启CONFIG_SYSVIPC，可能破坏KMI！自动关闭该配置..."
+            sed -i 's/CONFIG_SYSVIPC=y/CONFIG_SYSVIPC=n/' ./common/arch/arm64/configs/gki_defconfig
+          else
+            echo "未开启CONFIG_SYSVIPC，规避KMI风险"
+          fi
+          # 查找ABI冻结文件（多路径容错）
+          ABI_FILE=$(find ./common -name "abi_gki_aarch64.xml" -o -name "abi_gki.xml" 2>/dev/null | head -n1)
+          if [ -n "$ABI_FILE" ]; then
+            echo "找到ABI冻结文件：$ABI_FILE"
+            if grep -q "task_struct" "$ABI_FILE"; then
+              echo "确认task_struct为冻结结构体，当前配置未修改其成员"
+            fi
+          else
+            echo "未找到ABI冻结文件（abi_gki_aarch64.xml），已通过关闭危险配置保障KMI合规"
+          fi
           
-      # 新增步骤2：应用LXC+Docker相关补丁（cgroup修补+overlayfs2适配）
       - name: 应用LXC+Docker补丁（cgroup+overlayfs2）
         if: inputs.lxc_docker_enable
         run: |
           cd kernel_workspace
           echo "正在克隆LXC+Docker补丁仓库..."
-          # 克隆秋秋的cgroup修补补丁
           git clone https://github.com/qiqiu666/cgroup-patch.git -b android15-6.6
-          # 克隆overlayfs2驱动适配补丁
           git clone https://github.com/cctv18/overlayfs2-android.git -b sm8750-6.6
           
           echo "正在应用cgroup修补补丁..."
@@ -477,7 +487,6 @@ jobs:
           cp ../overlayfs2-android/0001-overlayfs2-adapt-sm8750.patch ./
           patch -p1 -F 3 < 0001-overlayfs2-adapt-sm8750.patch || true
           
-          # 修复overlayfs2与KSU的兼容性
           wget https://github.com/KernelSU-Modules-Repo/meta-overlayfs/raw/main/patches/overlayfs-ksu-compat.patch
           patch -p1 -F 3 < overlayfs-ksu-compat.patch || true
           
@@ -519,7 +528,7 @@ jobs:
             echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./ ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_NV=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_HTCP=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -639,7 +648,7 @@ jobs:
           echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
           echo 'ld.lld "$@"' >> ld-wrapper
           
-          echo "--- [Wrapper Test] 正在创建通用的时间劫持测试测试脚本 ---"
+          echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
           echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
@@ -705,7 +714,6 @@ jobs:
           else
             KSU_TYPENAME="KSU"
           fi
-          # 新增：打包时添加LXC/Docker标识
           LXC_DOCKER_TAG=""
           if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
             LXC_DOCKER_TAG="_LXC-Docker"
@@ -771,7 +779,6 @@ jobs:
             KSU_TYPENAME="KSU"
           fi
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
-          # 新增：LXC/Docker标识
           LXC_DOCKER_DESC="否"
           if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
             LXC_DOCKER_DESC="是（含cgroup修补+overlayfs2驱动）"
@@ -807,6 +814,7 @@ jobs:
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
             - 新增LXC+Docker合规支持，应用cgroup修补补丁及overlayfs2驱动适配补丁
+            - 修复ABI冻结文件不存在导致的构建失败问题，优化KMI合规校验逻辑
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

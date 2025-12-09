@@ -93,6 +93,15 @@ jobs:
     outputs:
       ksuver: ${{ steps.ksu_version.outputs.ksuver }}
     steps:
+      - name: 配置SSH密钥（解决GitHub克隆权限问题）
+        run: |
+          # 启用SSH严格主机密钥检查，避免首次连接确认
+          mkdir -p ~/.ssh
+          echo -e "StrictHostKeyChecking no" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          # 配置Git使用SSH替代HTTPS（自动转换）
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+      
       - name: 安装环境依赖+初始化源码仓库及llvm-Clang18工具链
         run: |
           rm -rf kernel_workspace
@@ -107,6 +116,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache pkg-config libseccomp-dev &
           
           echo "正在克隆源码仓库..."
+          # 替换为SSH克隆（自动转换，无需手动改地址）
           aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66" common &&
@@ -238,8 +248,8 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在添加SukiSU Ultra补丁..."
-            git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            git clone --depth=1 git@github.com:ShirkNeko/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 git@github.com:ShirkNeko/SukiSU_patch.git
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -249,9 +259,9 @@ jobs:
             patch -p1 < 69_hide_stuff.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在添加KernelSU Next补丁..."
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 git@github.com:simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             cd susfs4ksu && git checkout f450ec00bf592d080f59b01ff6f9242456c9a427 && cd ..
-            git clone https://github.com/WildKernels/kernel_patches.git
+            git clone --depth=1 git@github.com:WildKernels/kernel_patches.git
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -263,8 +273,8 @@ jobs:
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
             echo "正在为 MKSU (5ec1cff/KernelSU)添加补丁..."
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            git clone --depth=1 git@github.com:simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 git@github.com:ShirkNeko/SukiSU_patch.git
             cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
             PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$PATCH_FILE" ]; then
@@ -297,8 +307,8 @@ jobs:
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           else
             echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            git clone --depth=1 git@github.com:simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 git@github.com:ShirkNeko/SukiSU_patch.git
             cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
             PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$PATCH_FILE" ]; then
@@ -334,7 +344,7 @@ jobs:
         run: |
           echo "正在添加lz4 1.10.0 & zstd 1.5.7补丁…"
           cd kernel_workspace
-          git clone https://github.com/cctv18/oppo_oplus_realme_sm8750.git
+          git clone --depth=1 git@github.com:cctv18/oppo_oplus_realme_sm8750.git
           cp ./oppo_oplus_realme_sm8750/zram_patch/001-lz4.patch ./common/
           cp ./oppo_oplus_realme_sm8750/zram_patch/lz4armv8.S ./common/lib
           cp ./oppo_oplus_realme_sm8750/zram_patch/002-zstd.patch ./common/
@@ -347,7 +357,7 @@ jobs:
           echo "正在添加lz4kd补丁…"
           cd kernel_workspace
           if [ ! -d "SukiSU_patch" ]; then
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            git clone --depth=1 git@github.com:ShirkNeko/SukiSU_patch.git
           fi
           cd common
           cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
@@ -399,7 +409,6 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
-      # 修复核心：修改KMI校验逻辑，容错文件不存在场景
       - name: 开启LXC+Docker内核配置（KMI合规）
         if: inputs.lxc_docker_enable
         run: |
@@ -448,18 +457,16 @@ jobs:
           echo "CONFIG_SECCOMP_FILTER=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CGROUP_CPUSET=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MEMCG_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_MEMCG_SWAP_ENABLED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MEMCG_SWAP_ENABLED=y" >> ./common//arch/arm64/configs/gki_defconfig
           
-          # 修复：宽松KMI校验（文件不存在则跳过，仅规避已知风险配置）
+          # 宽松KMI校验（文件不存在则跳过，仅规避已知风险配置）
           echo "正在校验配置是否破坏KMI..."
-          # 检查是否开启危险配置（SYSVIPC会修改task_struct）
           if grep -q "CONFIG_SYSVIPC=y" ./common/arch/arm64/configs/gki_defconfig; then
             echo "警告：检测到开启CONFIG_SYSVIPC，可能破坏KMI！自动关闭该配置..."
             sed -i 's/CONFIG_SYSVIPC=y/CONFIG_SYSVIPC=n/' ./common/arch/arm64/configs/gki_defconfig
           else
             echo "未开启CONFIG_SYSVIPC，规避KMI风险"
           fi
-          # 查找ABI冻结文件（多路径容错）
           ABI_FILE=$(find ./common -name "abi_gki_aarch64.xml" -o -name "abi_gki.xml" 2>/dev/null | head -n1)
           if [ -n "$ABI_FILE" ]; then
             echo "找到ABI冻结文件：$ABI_FILE"
@@ -475,18 +482,34 @@ jobs:
         run: |
           cd kernel_workspace
           echo "正在克隆LXC+Docker补丁仓库..."
-          git clone https://github.com/qiqiu666/cgroup-patch.git -b android15-6.6
-          git clone https://github.com/cctv18/overlayfs2-android.git -b sm8750-6.6
+          # 关键修复：SSH克隆+深度1（加快速度+避免权限问题）
+          git clone --depth=1 git@github.com:qiqiu666/cgroup-patch.git -b android15-6.6 || {
+            echo "cgroup-patch仓库克隆失败，使用备用地址..."
+            git clone --depth=1 git@github.com:cctv18/cgroup-patch-mirror.git -b android15-6.6
+          }
+          git clone --depth=1 git@github.com:cctv18/overlayfs2-android.git -b sm8750-6.6 || {
+            echo "overlayfs2-android仓库克隆失败，使用备用地址..."
+            git clone --depth=1 git@github.com:KernelSU-Modules-Repo/overlayfs2-mirror.git -b sm8750-6.6
+          }
           
           echo "正在应用cgroup修补补丁..."
           cd common
-          cp ../cgroup-patch/0001-cgroup-fix-android15.patch ./
+          if [ -d "../cgroup-patch" ]; then
+            cp ../cgroup-patch/0001-cgroup-fix-android15.patch ./
+          else
+            cp ../cgroup-patch-mirror/0001-cgroup-fix-android15.patch ./
+          fi
           patch -p1 -F 3 < 0001-cgroup-fix-android15.patch || true
           
           echo "正在应用overlayfs2驱动适配补丁..."
-          cp ../overlayfs2-android/0001-overlayfs2-adapt-sm8750.patch ./
+          if [ -d "../overlayfs2-android" ]; then
+            cp ../overlayfs2-android/0001-overlayfs2-adapt-sm8750.patch ./
+          else
+            cp ../overlayfs2-mirror/0001-overlayfs2-adapt-sm8750.patch ./
+          fi
           patch -p1 -F 3 < 0001-overlayfs2-adapt-sm8750.patch || true
           
+          # 兼容性补丁使用HTTPS（公开仓库无需认证）
           wget https://github.com/KernelSU-Modules-Repo/meta-overlayfs/raw/main/patches/overlayfs-ksu-compat.patch
           patch -p1 -F 3 < overlayfs-ksu-compat.patch || true
           
@@ -528,7 +551,7 @@ jobs:
             echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./ ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_NV=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_HTCP=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -697,7 +720,7 @@ jobs:
       - name: 克隆 AnyKernel3 并打包
         run: |
           cd kernel_workspace
-          git clone https://github.com/cctv18/AnyKernel3 --depth=1
+          git clone --depth=1 git@github.com:cctv18/AnyKernel3.git
           rm -rf ./AnyKernel3/.git
           cd AnyKernel3
           cp ../common/out/arch/arm64/boot/Image ./Image
@@ -815,6 +838,7 @@ jobs:
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
             - 新增LXC+Docker合规支持，应用cgroup修补补丁及overlayfs2驱动适配补丁
             - 修复ABI冻结文件不存在导致的构建失败问题，优化KMI合规校验逻辑
+            - 修复GitHub HTTPS克隆权限错误，改用SSH克隆+容错机制
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

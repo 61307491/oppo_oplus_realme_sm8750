@@ -1,9 +1,11 @@
 name: 加速版构建 6.6.66 欧加真OKI内核
+
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
   KERNEL_NAME: 'android15-8-g29d86c5fc9dd-abogki428889875-4k'
+
 on:
   workflow_dispatch:
     inputs:
@@ -77,16 +79,12 @@ on:
         required: true
         type: boolean
         default: 'false'
-      container_support:
-        description: '是否启用LXC&Docker容器支持（按KML规则配置，默认开启）'
-        required: true
-        type: boolean
-        default: 'true'
       kernel_suffix:
         description: '内核后缀(留空默认,开头别加连字符,勿加空格等影响指令运行的保留字符)'
         required: false
         type: string
         default: ''
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -133,6 +131,7 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
+
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV
@@ -140,6 +139,7 @@ jobs:
           echo "当前磁盘空间："
           df -h
           echo "当前构建内核版本：6.6.66"
+
       - name: 载入当前版本内核的 ccache缓存
         uses: actions/cache@v4
         id: ccache-restore
@@ -177,6 +177,7 @@ jobs:
             echo "ccache缓存命中详情:"
             ccache -sv
           fi
+
       - name: 添加KernelSU
         id: ksu_version
         run: |
@@ -227,11 +228,13 @@ jobs:
               # 如果未找到插入点，在文件末尾追加
               END {if (!inserted) print def}
             ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
+
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
             KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+
             # 验证修改结果
             grep -A10 "REPO_OWNER" kernel/Kbuild  # 检查插入点后的内容
             grep "KSU_VERSION_FULL" kernel/Kbuild # 确认版本定义存在
@@ -265,6 +268,7 @@ jobs:
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
           fi
+
       - name: 应用 KernelSU & SUSFS 补丁
         if: inputs.susfs_enable
         run: |
@@ -378,6 +382,7 @@ jobs:
           cd ./common
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
+
       - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
@@ -440,48 +445,6 @@ jobs:
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
-      - name: 启用LXC&Docker容器支持（按KML规则配置）
-        if: inputs.container_support
-        run: |
-          cd kernel_workspace
-          # ==================== 容器基础依赖（KML核心要求）====================
-          # 1. 命名空间（容器隔离核心）
-          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 主机名隔离
-          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程间通信隔离
-          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 用户权限隔离
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程ID隔离
-          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网络隔离
-          # 2. 控制组（容器资源限制核心）
-          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig  # CPU资源统计
-          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 设备访问控制
-          echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器冻结/解冻
-          echo "CONFIG_CGROUP_MEM_RES_CTLR=y" >> ./common/arch/arm64/configs/gki_defconfig  # 内存限制
-          echo "CONFIG_CGROUP_MEM_RES_CTLR_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig  # 内存交换限制
-          echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程数限制
-          echo "CONFIG_CGROUP_NET_PRIO=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网络优先级
-          # ==================== Docker/LXC 存储驱动支持 ====================
-          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # Docker默认存储驱动
-          echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig  # 重定向目录支持
-          echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig  # 索引优化
-          echo "CONFIG_BTRFS_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 可选存储驱动（兼容部分LXC场景）
-          echo "CONFIG_BTRFS_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig  # BTRFS权限控制
-          # ==================== 容器网络支持 ====================
-          echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网络桥接（容器跨网络通信）
-          echo "CONFIG_BRIDGE_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig  # 桥接网络防火墙
-          echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig  # 虚拟网卡（容器网络接口）
-          echo "CONFIG_IP_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig  # IPv4地址转换（容器访问外网）
-          echo "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y" >> ./common/arch/arm64/configs/gki_defconfig  # 连接跟踪
-          echo "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 地址伪装
-          # ==================== 容器安全与兼容支持 ====================
-          echo "CONFIG_KEYS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 密钥管理（容器权限验证）
-          echo "CONFIG_SECURITY_SELINUX=y" >> ./common/arch/arm64/configs/gki_defconfig  # SELinux兼容（部分容器安全要求）
-          echo "CONFIG_SECURITY_SELINUX_BOOTPARAM=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEVPTS_MULTIPLE_INSTANCES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 多终端实例（容器交互）
-          echo "CONFIG_FUSE_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # FUSE支持（部分容器挂载需求）
-          echo "CONFIG_UNIX_DIAG=y" >> ./common/arch/arm64/configs/gki_defconfig  # Unix socket诊断（容器网络调试）
-          
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -517,6 +480,7 @@ jobs:
           cd common
           wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
           patch -p1 -F 3 < config.patch || true
+
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
           if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
@@ -556,6 +520,7 @@ jobs:
               echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./common/arch/arm64/configs/gki_defconfig
             fi
           fi
+
       - name: 启用ADIOS IO调度器
         if: inputs.adios_enable
         run: |
@@ -563,12 +528,14 @@ jobs:
           cd kernel_workspace
           echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用Re-Kernel支持
         if: inputs.rekernel_enable
         run: |
           echo "正在启用Re-Kernel支持(用于与Freezer,NoActive等软件配合使用,提升冻结后台能力)…"
           cd kernel_workspace
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
         run: |
@@ -600,6 +567,7 @@ jobs:
           sed -i 's/selinuxfs.o //g' "./selinux/Makefile"
           sed -i 's/hooks.o //g' "./selinux/Makefile"
           cat "./baseband-guard/sepatch.txt" >> "./selinux/Makefile"
+
       - name: 添加制作名称
         run: |
           cd kernel_workspace
@@ -613,7 +581,7 @@ jobs:
           else
             echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
             for f in ./common/scripts/setlocalversion; do
-              sed -i "\ "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
+              sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
             done
             sudo sed -i 's/-4k/-${{ env.KERNEL_NAME }}/g' ./common/arch/arm64/configs/gki_defconfig
           fi
@@ -743,17 +711,20 @@ jobs:
           else
             zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}.zip ./*
           fi
+
       - name: 上传 Ccache 调试日志
         if: always() && inputs.ccache_debug
         uses: actions/upload-artifact@v4
         with:
           name: ccache-debug-log
           path: ${{ github.workspace }}/kernel_workspace/ccache.log
+
       - name: 上传 ZIP 工件
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
           path: ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -761,12 +732,14 @@ jobs:
       contents: write
       packages: write
       actions: read
+
     steps:
       - name: 下载 ZIP 工件
         uses: actions/download-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
           path: ./release_zips
+
       - name: 设置环境变量
         run: |
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
@@ -806,7 +779,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC&Docker容器支持
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -816,14 +789,13 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - LXC&Docker容器支持：${{ github.event.inputs.container_support }}
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC&Docker容器支持（按KML规则配置，含命名空间、控制组、容器存储/网络驱动等核心特性）
+            - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

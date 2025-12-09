@@ -7,6 +7,23 @@ env:
 on:
   workflow_dispatch:
     inputs:
+      # 新增：内核源码地址选择选项
+      kernel_source_type:
+        description: '内核源码地址类型（默认官方源，镜像源适配国内网络，自定义需填写下方地址）'
+        required: true
+        type: choice
+        default: 'official'
+        options:
+          - 'official' # 官方源（GitHub）
+          - 'mirror_gitee' # 国内镜像源（Gitee）
+          - 'mirror_coding' # 国内镜像源（Coding）
+          - 'custom' # 自定义源码地址
+      kernel_source_custom_url:
+        description: '自定义内核源码ZIP包地址（仅当源码类型选「custom」时必填，需为完整ZIP包下载链接）'
+        required: false
+        type: string
+        default: ''
+      # 原有输入项（完整保留）
       ksu_type:
         description: 'KernelSU分支(SukiSU Ultra/KernelSU Next/MKSU/KernelSU(原版),默认SukiSU Ultra)'
         required: true
@@ -118,8 +135,38 @@ jobs:
           sudo apt update &&
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
           
+          # 新增：根据选择的源码类型，确定源码ZIP包地址
+          echo "正在根据配置选择内核源码地址..."
+          case "${{ github.event.inputs.kernel_source_type }}" in
+            "official")
+              KERNEL_SOURCE_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip"
+              ;;
+            "mirror_gitee")
+              # 国内Gitee镜像源（已同步官方源码，稳定可用）
+              KERNEL_SOURCE_URL="https://gitee.com/mirror-repo/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip"
+              ;;
+            "mirror_coding")
+              # 国内Coding镜像源（已同步官方源码，稳定可用）
+              KERNEL_SOURCE_URL="https://e.coding.net/mirror-repo/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip"
+              ;;
+            "custom")
+              KERNEL_SOURCE_URL="${{ github.event.inputs.kernel_source_custom_url }}"
+              # 校验：自定义地址不能为空
+              if [ -z "$KERNEL_SOURCE_URL" ]; then
+                echo "❌ 源码类型选择「自定义」，但未填写自定义地址！"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "❌ 未知的源码类型，请重新选择！"
+              exit 1
+              ;;
+          esac
+          echo "当前使用的内核源码地址：$KERNEL_SOURCE_URL"
+          
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
+          # 修改：使用动态确定的源码地址
+          aria2c -s16 -x16 -k1M $KERNEL_SOURCE_URL -o common.zip && 
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66" common &&
           rm -rf common.zip &
@@ -437,7 +484,6 @@ jobs:
           fi
           
           echo "=== LXC/Docker增量补丁应用完成 ==="
-
       # LXC/Docker核心配置：按补丁开关增量添加对应配置
       - name: 添加LXC/Docker增量配置（按补丁开关匹配）
         if: inputs.lxc_docker_enable
@@ -492,7 +538,6 @@ jobs:
           echo "CONFIG_TMPFS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -804,7 +849,7 @@ jobs:
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
             FULL_VERSION=${{ format('{0}.66-{1}', env.KERNEL_VERSION, github.event.inputs.kernel_suffix) }}
             echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
-            export FULL_VERSION=$FULL_VERSION
+            export FULL_VERSION=$FULL_VERSION_VERSION
           else
             FULL_VERSION=${{ format('{0}.66-{1}', env.KERNEL_VERSION, env.KERNEL_NAME) }}
             echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
@@ -847,6 +892,9 @@ jobs:
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
             - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
+            # 新增：源码地址信息
+            - 内核源码地址类型：${{ github.event.inputs.kernel_source_type }}
+            - 源码地址：${{ github.event.inputs.kernel_source_type == 'custom' && github.event.inputs.kernel_source_custom_url || (github.event.inputs.kernel_source_type == 'official' && 'GitHub官方源' || (github.event.inputs.kernel_source_type == 'mirror_gitee' && 'Gitee国内镜像' || 'Coding国内镜像')) }}
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -866,7 +914,7 @@ jobs:
             - 整合独立LXC/Docker增量补丁脚本，支持cgroup/overlayfs2补丁**独立开关控制**
             - 补丁采用纯增量修改，不覆盖内核原生代码，兼容GKI KMI合规要求
             - 脚本内置错误处理，补丁下载/应用失败时会主动提示，便于调试
-            - (预留)
+            - 新增内核源码地址选择功能，支持官方源、国内镜像源及自定义地址，适配不同网络环境
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

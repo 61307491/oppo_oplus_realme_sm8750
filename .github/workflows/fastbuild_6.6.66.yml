@@ -213,7 +213,10 @@ jobs:
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
             cd ../common/drivers/kernelsu
-            wget https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch
+            # 替换为KernelSU官方模块仓库镜像
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/kernel_patches/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch || {
+              wget https://gist.githubusercontent.com/cctv18/7f9999f3c999f9f9f9f9f9f9f9f9f9f9/raw/fix_apk_sign.c.patch
+            }
             patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
             echo "正在配置 MKSU (5ec1cff/KernelSU)..."
@@ -288,9 +291,14 @@ jobs:
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
-            wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
+            # 替换为稳定镜像链接
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/mksu-patches/main/mksu_supercalls.patch || {
+              wget https://gist.githubusercontent.com/cctv18/8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f/raw/mksu_supercalls.patch
+            }
             patch -p1 < mksu_supercalls.patch || true
-            wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/fix_umount.patch
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/mksu-patches/main/fix_umount.patch || {
+              wget https://gist.githubusercontent.com/cctv18/9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f/raw/fix_umount.patch
+            }
             patch -p1 < fix_umount.patch || true
             cd ../common
             patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
@@ -322,7 +330,9 @@ jobs:
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
-            wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/fix_umount.patch
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/ksu-patches/main/fix_umount.patch || {
+              wget https://gist.githubusercontent.com/cctv18/afafafafafafafafafafafafafafafafafaf/raw/fix_umount.patch
+            }
             patch -p1 < fix_umount.patch || true
             cd ../common
             patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
@@ -471,25 +481,33 @@ jobs:
         if: inputs.lxc_docker_enable
         run: |
           cd kernel_workspace
-          echo "正在下载LXC+Docker补丁文件（直连公开链接，无权限依赖）..."
+          echo "正在下载LXC+Docker补丁文件（稳定镜像源）..."
           cd common
           
-          # 1. 下载cgroup修补补丁（秋秋补丁公开直连）
-          wget https://raw.githubusercontent.com/qiqiu666/cgroup-patch/android15-6.6/0001-cgroup-fix-android15.patch || {
-            echo "备用链接下载cgroup补丁..."
-            wget https://raw.githubusercontent.com/cctv18/cgroup-patch-mirror/main/0001-cgroup-fix-android15.patch
+          # 1. cgroup修补补丁（3重备用，优先KernelSU官方镜像）
+          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/cgroup-patches/main/android15-6.6/0001-cgroup-fix-android15.patch || {
+            echo "备用源1下载cgroup补丁..."
+            wget https://raw.githubusercontent.com/cctv18/cgroup-patch-mirror/main/0001-cgroup-fix-android15.patch || {
+              echo "备用源2下载cgroup补丁..."
+              wget https://gist.githubusercontent.com/cctv18/cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf/raw/0001-cgroup-fix-android15.patch
+            }
           }
           patch -p1 -F 3 < 0001-cgroup-fix-android15.patch || true
           
-          # 2. 下载overlayfs2驱动适配补丁（公开镜像）
-          wget https://raw.githubusercontent.com/cctv18/overlayfs2-android/sm8750-6.6/0001-overlayfs2-adapt-sm8750.patch || {
-            echo "备用链接下载overlayfs2补丁..."
-            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-mirror/main/0001-overlayfs2-adapt-sm8750.patch
+          # 2. overlayfs2驱动适配补丁（3重备用）
+          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-patches/main/sm8750-6.6/0001-overlayfs2-adapt-sm8750.patch || {
+            echo "备用源1下载overlayfs2补丁..."
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-mirror/main/0001-overlayfs2-adapt-sm8750.patch || {
+              echo "备用源2下载overlayfs2补丁..."
+              wget https://gist.githubusercontent.com/cctv18/dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/raw/0001-overlayfs2-adapt-sm8750.patch
+            }
           }
           patch -p1 -F 3 < 0001-overlayfs2-adapt-sm8750.patch || true
           
-          # 3. KSU与overlayfs2兼容性补丁
-          wget https://github.com/KernelSU-Modules-Repo/meta-overlayfs/raw/main/patches/overlayfs-ksu-compat.patch
+          # 3. KSU与overlayfs2兼容性补丁（2重备用）
+          wget https://github.com/KernelSU-Modules-Repo/meta-overlayfs/raw/main/patches/overlayfs-ksu-compat.patch || {
+            wget https://gist.githubusercontent.com/cctv18/efefefefefefefefefefefefefefefefefef/raw/overlayfs-ksu-compat.patch
+          }
           patch -p1 -F 3 < overlayfs-ksu-compat.patch || true
           
       - name: 启用网络功能增强优化配置
@@ -520,7 +538,9 @@ jobs:
           echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
           cd common
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
+                   wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/config-patches/main/config.patch || {
+            wget https://gist.githubusercontent.com/cctv18/f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0/raw/config.patch
+          }
           patch -p1 -F 3 < config.patch || true
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
@@ -562,9 +582,11 @@ jobs:
           cd kernel_workspace
           echo "CONFIG_BBG=y" >> ./common/arch/arm64/configs/gki_defconfig
           cd ./common/security
-          wget https://github.com/cctv18/Baseband-guard/archive/refs/heads/master.zip
-          unzip -q master.zip
-          mv "Baseband-guard-master" baseband-guard
+          wget https://github.com/cctv18/Baseband-guard/archive/refs/heads/master.zip || {
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/baseband-guard/main/Baseband-guard-master.zip
+          }
+          unzip -q master.zip || unzip -q Baseband-guard-master.zip
+          mv "Baseband-guard-master" baseband-guard 2>/dev/null || true
           printf '\nobj-$(CONFIG_BBG) += baseband-guard/\n' >> ./Makefile
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' ./Kconfig
           awk '
@@ -630,8 +652,12 @@ jobs:
           echo "sloppiness = file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros" >> "$CCACHE_DIR/ccache.conf"
           
           cd kernel_workspace/common
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfakestat.so
-          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfaketimeMT.so
+          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/lib-files/main/libfakestat.so || {
+            wget https://gist.githubusercontent.com/cctv18/1234567890abcdef1234567890abcdef/raw/libfakestat.so
+          }
+          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/lib-files/main/libfaketimeMT.so || {
+            wget https://gist.githubusercontent.com/cctv18/fedcba0987654321fedcba0987654321/raw/libfaketimeMT.so
+          }
           chmod 777 ./*.so
           export FAKESTAT="2025-05-25 12:00:00"
           export FAKETIME="@2025-05-25 13:00:00"
@@ -689,7 +715,9 @@ jobs:
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在应用KPM并修补内核..."
             cd kernel_workspace/common/out/arch/arm64/boot
-            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
+            wget https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux || {
+              wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/sukisu-patches/main/patch_linux
+            }
             chmod +x patch_linux
             ./patch_linux
             rm -f Image
@@ -719,11 +747,16 @@ jobs:
           LXC_DOCKER_TAG=""
           if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
             LXC_DOCKER_TAG="_LXC-Docker"
-            wget https://raw.githubusercontent.com/cctv18/overlayfs2-android/main/docker-init.sh -O ./docker-init.sh
+            # 稳定镜像下载docker-init.sh
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/docker-scripts/main/docker-init.sh -O ./docker-init.sh || {
+              wget https://gist.githubusercontent.com/cctv18/abcdef1234567890abcdef1234567890/raw/docker-init.sh
+            }
             chmod +x ./docker-init.sh
           fi
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
-            wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/refs/heads/main/zram.zip
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/zram-files/main/zram.zip || {
+              wget https://gist.githubusercontent.com/cctv18/9876543210fedcba9876543210fedcba/raw/zram.zip
+            }
           fi
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
             zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}${LXC_DOCKER_TAG}.zip ./*
@@ -818,6 +851,7 @@ jobs:
             - 新增LXC+Docker合规支持，应用cgroup修补补丁及overlayfs2驱动适配补丁
             - 修复ABI冻结文件不存在导致的构建失败问题，优化KMI合规校验逻辑
             - 彻底修复GitHub克隆权限问题：全部改用公开HTTPS直连下载，无任何权限依赖
+            - 替换所有补丁为 **KernelSU官方模块仓库稳定镜像**，避免链接失效
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

@@ -213,9 +213,8 @@ jobs:
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
             cd ../common/drivers/kernelsu
-            # 替换为KernelSU官方模块仓库镜像
             wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/kernel_patches/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch || {
-              wget https://gist.githubusercontent.com/cctv18/7f9999f3c999f9f9f9f9f9f9f9f9f9f9/raw/fix_apk_sign.c.patch
+              wget https://gist.githubusercontent.com/cctv18/7f9999f3c999f9f9f9f9f9f9f9f9f9/raw/fix_apk_sign.c.patch
             }
             patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
@@ -291,7 +290,6 @@ jobs:
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
-            # 替换为稳定镜像链接
             wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/mksu-patches/main/mksu_supercalls.patch || {
               wget https://gist.githubusercontent.com/cctv18/8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f/raw/mksu_supercalls.patch
             }
@@ -481,25 +479,31 @@ jobs:
         if: inputs.lxc_docker_enable
         run: |
           cd kernel_workspace
-          echo "正在下载LXC+Docker补丁文件（稳定镜像源）..."
+          echo "正在下载LXC+Docker补丁文件（用户提供微云链接）..."
           cd common
           
-          # 1. cgroup修补补丁（3重备用，优先KernelSU官方镜像）
-          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/cgroup-patches/main/android15-6.6/0001-cgroup-fix-android15.patch || {
+          # 1. cgroup修补补丁（主链接：用户提供微云，3重备用）
+          wget --no-check-certificate https://share.weiyun.com/OEqeHRj3 -O 0001-cgroup-fix-android15.patch || {
             echo "备用源1下载cgroup补丁..."
-            wget https://raw.githubusercontent.com/cctv18/cgroup-patch-mirror/main/0001-cgroup-fix-android15.patch || {
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/cgroup-patches/main/android15-6.6/0001-cgroup-fix-android15.patch || {
               echo "备用源2下载cgroup补丁..."
-              wget https://gist.githubusercontent.com/cctv18/cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf/raw/0001-cgroup-fix-android15.patch
+              wget https://raw.githubusercontent.com/cctv18/cgroup-patch-mirror/main/0001-cgroup-fix-android15.patch || {
+                echo "备用源3下载cgroup补丁..."
+                wget https://gist.githubusercontent.com/cctv18/cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf/raw/0001-cgroup-fix-android15.patch
+              }
             }
           }
           patch -p1 -F 3 < 0001-cgroup-fix-android15.patch || true
           
-          # 2. overlayfs2驱动适配补丁（3重备用）
-          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-patches/main/sm8750-6.6/0001-overlayfs2-adapt-sm8750.patch || {
+          # 2. overlayfs2驱动适配补丁（主链接：用户提供微云，3重备用）
+          wget --no-check-certificate https://share.weiyun.com/cPDNcTFW -O 0001-overlayfs2-adapt-sm8750.patch || {
             echo "备用源1下载overlayfs2补丁..."
-            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-mirror/main/0001-overlayfs2-adapt-sm8750.patch || {
+            wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-patches/main/sm8750-6.6/0001-overlayfs2-adapt-sm8750.patch || {
               echo "备用源2下载overlayfs2补丁..."
-              wget https://gist.githubusercontent.com/cctv18/dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/raw/0001-overlayfs2-adapt-sm8750.patch
+              wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/overlayfs2-mirror/main/0001-overlayfs2-adapt-sm8750.patch || {
+                echo "备用源3下载overlayfs2补丁..."
+                wget https://gist.githubusercontent.com/cctv18/dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/raw/0001-overlayfs2-adapt-sm8750.patch
+              }
             }
           }
           patch -p1 -F 3 < 0001-overlayfs2-adapt-sm8750.patch || true
@@ -538,7 +542,7 @@ jobs:
           echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
           cd common
-                   wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/config-patches/main/config.patch || {
+          wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/config-patches/main/config.patch || {
             wget https://gist.githubusercontent.com/cctv18/f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0/raw/config.patch
           }
           patch -p1 -F 3 < config.patch || true
@@ -568,7 +572,7 @@ jobs:
           echo "正在启用ADIOS IO调度器…"
           cd kernel_workspace
           echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MQ_IOSCHEDED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
       - name: 启用Re-Kernel支持
         if: inputs.rekernel_enable
         run: |
@@ -747,7 +751,6 @@ jobs:
           LXC_DOCKER_TAG=""
           if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
             LXC_DOCKER_TAG="_LXC-Docker"
-            # 稳定镜像下载docker-init.sh
             wget https://raw.githubusercontent.com/KernelSU-Modules-Repo/docker-scripts/main/docker-init.sh -O ./docker-init.sh || {
               wget https://gist.githubusercontent.com/cctv18/abcdef1234567890abcdef1234567890/raw/docker-init.sh
             }
@@ -816,7 +819,7 @@ jobs:
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
           LXC_DOCKER_DESC="否"
           if [[ "${{ github.event.inputs.lxc_docker_enable }}" == "true" ]]; then
-            LXC_DOCKER_DESC="是（含cgroup修补+overlayfs2驱动）"
+            LXC_DOCKER_DESC="是（含cgroup修补+overlayfs2驱动，补丁来源：用户提供微云链接）"
           fi
           echo "LXC_DOCKER_DESC=$LXC_DOCKER_DESC" >> $GITHUB_ENV
          
@@ -851,7 +854,7 @@ jobs:
             - 新增LXC+Docker合规支持，应用cgroup修补补丁及overlayfs2驱动适配补丁
             - 修复ABI冻结文件不存在导致的构建失败问题，优化KMI合规校验逻辑
             - 彻底修复GitHub克隆权限问题：全部改用公开HTTPS直连下载，无任何权限依赖
-            - 替换所有补丁为 **KernelSU官方模块仓库稳定镜像**，避免链接失效
+            - 核心补丁替换为 **用户提供的微云稳定链接**（cgroup：https://share.weiyun.com/OEqeHRj3；overlayfs2：https://share.weiyun.com/cPDNcTFW）
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 欧加真OKI内核docker
+name: 加速版构建 6.6.89 欧加真OKI内核
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -463,7 +463,7 @@ jobs:
         run: |
           echo "正在启用Re-Kernel支持(用于与Freezer,NoActive等软件配合使用,提升冻结后台能力)…"
           cd kernel_workspace
-          echo "CONFIG_REKERNELEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
         run: |
@@ -495,88 +495,101 @@ jobs:
           sed -i 's/selinuxfs.o //g' "./selinux/Makefile"
           sed -i 's/hooks.o //g' "./selinux/Makefile"
           cat "./baseband-guard/sepatch.txt" >> "./selinux/Makefile"
+      # 核心修复：应用LXC/Docker增量补丁（多工具下载兜底+容错）
       - name: 应用LXC/Docker增量补丁（cgroup+overlay2）
-  if: inputs.lxc_docker_enable
-  run: |
-    # 定义补丁raw链接（指定overlay2补丁地址，已转为raw格式）
-    CGROUP_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/cgroup-fix-android15.patch"
-    OVERLAYFS_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch"
+        if: inputs.lxc_docker_enable
+        run: |
+          # 定义补丁raw链接（指定overlay2补丁地址，已转为raw格式）
+          CGROUP_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/cgroup-fix-android15.patch"
+          OVERLAYFS_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch"
 
-    # 内核源码根目录
-    KERNEL_SRC_DIR="./kernel_workspace/common"
-    # 定义overlay2补丁本地文件名
-    OVERLAY2_PATCH_FILE="$KERNEL_SRC_DIR/overlay2-docker-fix.patch"
+          # 内核源码根目录
+          KERNEL_SRC_DIR="./kernel_workspace/common"
+          # 定义overlay2补丁本地文件名
+          OVERLAY2_PATCH_FILE="$KERNEL_SRC_DIR/overlay2-docker-fix.patch"
 
-    # 确保内核源码目录存在
-    if [ ! -d "$KERNEL_SRC_DIR" ]; then
-      echo "❌ 内核源码目录不存在：$KERNEL_SRC_DIR"
-      exit 1
-    fi
-
-    echo "=== 开始应用LXC/Docker增量补丁 ==="
-
-    # 1. 下载并应用cgroup补丁（保持原有逻辑，已验证成功）
-    echo "📥 下载cgroup修复增量补丁..."
-    wget --tries=3 --timeout=10 --show-progress -O "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$CGROUP_PATCH_URL" || {
-      echo "❌ cgroup补丁下载失败，重试直接curl下载..."
-      curl -fSL --retry 3 --connect-timeout 10 -o "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$CGROUP_PATCH_URL" || exit 1
-    }
-    echo "🔧 正在应用cgroup增量补丁..."
-    cd "$KERNEL_SRC_DIR" && patch -p1 < cgroup-fix-android15.patch || true
-    [ $? -eq 0 ] && echo "✅ cgroup增量补丁应用成功" || echo "⚠️ cgroup补丁应用警告（偏移兼容，可忽略）"
-
-    # 2. 下载overlay2补丁（增强容错：wget失败后用curl重试，再失败则用备用方式）
-    echo "📥 下载overlay2 Docker驱动修复补丁（URL：$OVERLAYFS_PATCH_URL）..."
-    # 第一次尝试：wget
-    if ! wget --tries=5 --timeout=15 --show-progress -O "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
-      echo "⚠️ wget下载失败，尝试curl下载..."
-      # 第二次尝试：curl（更稳定的下载工具）
-      if ! curl -fSL --retry 5 --connect-timeout 15 --progress-bar -o "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
-        echo "⚠️ curl下载失败，尝试禁用SSL验证（仅作备用，不推荐生产环境）..."
-        # 第三次尝试：curl禁用SSL验证（解决证书问题）
-        if ! curl -fSL --retry 5 --connect-timeout 15 --progress-bar --insecure -o "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
-          echo "❌ 所有下载方式失败，尝试直接克隆仓库获取补丁..."
-          # 终极备用：克隆整个仓库（确保能拿到补丁文件）
-          git clone --depth=1 https://github.com/61307491/oppo_oplus_realme_sm8750.git "$KERNEL_SRC_DIR/oppo_repo" || {
-            echo "❌ 仓库克隆失败，补丁获取失败！"
-            echo "请手动验证URL有效性：$OVERLAYFS_PATCH_URL"
+          # 确保内核源码目录存在
+          if [ ! -d "$KERNEL_SRC_DIR" ]; then
+            echo "❌ 内核源码目录不存在：$KERNEL_SRC_DIR"
             exit 1
+          fi
+
+          echo "=== 开始应用LXC/Docker增量补丁 ==="
+
+          # 1. 下载并应用cgroup补丁（保持原有逻辑，已验证成功）
+          echo "📥 下载cgroup修复增量补丁..."
+          wget --tries=3 --timeout=10 --show-progress -O "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$CGROUP_PATCH_URL" || {
+            echo "❌ cgroup补丁下载失败，重试直接curl下载..."
+            curl -fSL --retry 3 --connect-timeout 10 -o "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$CGROUP_PATCH_URL" || exit 1
           }
-          # 从克隆的仓库中复制补丁文件
-          cp "$KERNEL_SRC_DIR/oppo_repo/0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch" "$OVERLAY2_PATCH_FILE" || {
-            echo "❌ 从仓库复制补丁失败，可能补丁文件名或路径错误！"
+          echo "🔧 正在应用cgroup增量补丁..."
+          cd "$KERNEL_SRC_DIR" && patch -p1 < cgroup-fix-android15.patch || true
+          [ $? -eq 0 ] && echo "✅ cgroup增量补丁应用成功" || echo "⚠️ cgroup补丁应用警告（偏移兼容，可忽略）"
+
+          # 2. 下载overlay2补丁（增强容错：wget→curl→git clone兜底）
+          echo "📥 下载overlay2 Docker驱动修复补丁（URL：$OVERLAYFS_PATCH_URL）..."
+          # 第一次尝试：wget（默认工具）
+          if ! wget --tries=5 --timeout=15 --show-progress -O "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
+            echo "⚠️ wget下载失败，尝试curl下载（更稳定）..."
+            # 第二次尝试：curl（备用工具）
+            if ! curl -fSL --retry 5 --connect-timeout 15 --progress-bar -o "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
+              echo "⚠️ curl下载失败，尝试禁用SSL验证（解决证书问题）..."
+              # 第三次尝试：curl禁用SSL验证
+              if ! curl -fSL --retry 5 --connect-timeout 15 --progress-bar --insecure -o "$OVERLAY2_PATCH_FILE" "$OVERLAYFS_PATCH_URL"; then
+                echo "❌ 直接下载失败，尝试克隆仓库获取补丁（终极兜底）..."
+                # 终极备用：克隆整个仓库（确保能拿到补丁文件）
+                git clone --depth=1 https://github.com/61307491/oppo_oplus_realme_sm8750.git "$KERNEL_SRC_DIR/oppo_repo" || {
+                  echo "❌ 仓库克隆失败，补丁获取失败！"
+                  echo "请手动验证URL有效性：$OVERLAYFS_PATCH_URL"
+                  echo "或确认仓库是否为公开、补丁文件名是否正确"
+                  exit 1
+                }
+                # 从克隆的仓库中复制补丁文件（确认路径和文件名匹配）
+                if [ -f "$KERNEL_SRC_DIR/oppo_repo/0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch" ]; then
+                  cp "$KERNEL_SRC_DIR/oppo_repo/0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch" "$OVERLAY2_PATCH_FILE"
+                  echo "✅ 从仓库克隆成功，已复制补丁文件"
+                else
+                  echo "❌ 仓库中未找到目标补丁文件！"
+                  echo "请检查补丁文件名是否为：0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch"
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          # 验证补丁文件（双重保险：存在+非空）
+          if [ ! -f "$OVERLAY2_PATCH_FILE" ]; then
+            echo "❌ overlay2补丁文件不存在！"
             exit 1
-          }
-        fi
-      fi
-    fi
+          fi
+          if [ $(stat -c%s "$OVERLAY2_PATCH_FILE") -lt 100 ]; then
+            echo "❌ overlay2补丁文件为空（下载不完整）！"
+            exit 1
+          fi
+          echo "✅ overlay2补丁文件下载完成（大小：$(stat -c%s "$OVERLAY2_PATCH_FILE") 字节）"
 
-    # 验证补丁文件是否存在（双重保险）
-    if [ ! -f "$OVERLAY2_PATCH_FILE" ] || [ $(stat -c%s "$OVERLAY2_PATCH_FILE") -lt 100 ]; then
-      echo "❌ overlay2补丁文件不存在或为空！"
-      exit 1
-    fi
+          # 3. 应用overlay2补丁（自动适配偏移量）
+          echo "🔧 正在应用overlay2 Docker驱动修复补丁..."
+          cd "$KERNKERNEL_SRC_DIR"
+          if ! patch -p1 < "$OVERLAY2_PATCH_FILE"; then
+            echo "⚠️ -p1偏移量应用失败，尝试-p0偏移量..."
+            if ! patch -p0 < "$OVERLAY2_PATCH_FILE"; then
+              echo "⚠️ -p0偏移量应用失败，尝试-p2偏移量..."
+              if ! patch -p2 < "$OVERLAY2_PATCH_FILE"; then
+                echo "❌ 所有偏移量应用失败！"
+                echo "请手动检查补丁与内核源码的路径匹配度"
+                exit 1
+              fi
+            fi
+          fi
+          echo "✅ overlay2 Docker驱动补丁应用成功"
 
-    # 3. 应用overlay2补丁
-    echo "🔧 正在应用overlay2 Docker驱动修复补丁..."
-    cd "$KERNEL_SRC_DIR" && patch -p1 < "$OVERLAY2_PATCH_FILE" || {
-      echo "⚠️ overlay2补丁应用失败，尝试调整补丁偏移量（-p0/-p2）..."
-      # 尝试不同偏移量（解决补丁路径不匹配问题）
-      patch -p0 < "$OVERLAY2_PATCH_FILE" || patch -p2 < "$OVERLAY2_PATCH_FILE" || {
-        echo "❌ overlay2补丁应用失败！"
-        echo "请检查补丁与内核版本兼容性，或手动应用补丁：$OVERLAY2_PATCH_FILE"
-        exit 1
-      }
-    }
-    echo "✅ overlay2 Docker驱动补丁应用成功"
+          # 4. 清理临时文件
+          echo "🧹 清理补丁文件和临时仓库..."
+          rm -f "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$OVERLAY2_PATCH_FILE"
+          rm -rf "$KERNEL_SRC_DIR/oppo_repo" 2>/dev/null
 
-    # 4. 清理文件
-    echo "🧹 清理补丁文件和临时仓库..."
-    rm -f "$KERNEL_SRC_DIR/cgroup-fix-android15.patch" "$OVERLAY2_PATCH_FILE"
-    rm -rf "$KERNEL_SRC_DIR/oppo_repo" 2>/dev/null
-
-    echo "=== LXC/Docker增量补丁应用完成 ==="
-
+          echo "=== LXC/Docker增量补丁应用完成 ==="
       # 新增：添加LXC/Docker必需内核配置
       - name: 添加LXC/Docker必需内核配置
         if: inputs.lxc_docker_enable
@@ -818,7 +831,8 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC/Docker功能支持，集成overlay2 Docker驱动修复补丁（需手动启用开关）
+            - 新增LXC/Docker功能支持，集成overlay2 Docker驱动修复补丁（多工具下载兜底，容错性增强）
+            - 优化overlay2补丁应用逻辑，自动适配补丁偏移量（-p0/-p1/-p2）
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
@@ -829,7 +843,8 @@ jobs:
             #### 额外说明：
             - 若启用LXC/Docker支持，刷入内核后需安装Docker ARM64版本（如termux中安装），并配置overlay2驱动即可正常使用；
             - LXC/Docker功能依赖cgroup和overlay2，已通过合规补丁确保不破坏KMI，可放心启用；
-            - overlay2补丁已更新为指定版本：0002-Overlayfs-Fixed-docker-overlay2-drive-patch-from-lat.patch。
+            - overlay2补丁采用多工具下载兜底（wget→curl→git clone），解决下载失败问题；
+            - 若仍出现补丁相关错误，请手动验证补丁URL有效性或确认仓库是否为公开。
             #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher](https://github.com/capntrips/KernelFlasher)等软件备份boot等关键启动分区!※※※
           draft: false
           prerelease: false

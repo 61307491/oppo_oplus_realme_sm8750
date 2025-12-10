@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 欧加真OKI内核开启lxc和docker打补丁
+name: 加速版构建 6.6.66 欧加真OKI内核（含LXC&Docker支持）
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -82,23 +82,6 @@ on:
         required: false
         type: string
         default: ''
-      # 总开关：控制是否开启LXC/Docker功能（关联补丁+配置）
-      lxc_docker_enable:
-        description: '是否开启LXC/Docker功能总开关(需配合下方补丁开关使用)'
-        required: true
-        type: boolean
-        default: 'true'
-      # 补丁独立开关：增量应用，可单独控制
-      cgroup_patch_enable:
-        description: '是否应用LXC/Docker cgroup增量补丁(适配Android15，容器资源限制必需)'
-        required: true
-        type: boolean
-        default: 'true'
-      overlayfs2_patch_enable:
-        description: '是否应用Docker overlayfs2增量补丁(KSU兼容，默认存储驱动必需)'
-        required: true
-        type: boolean
-        default: 'true'
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -368,85 +351,44 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
-          
-      # 增量补丁1：cgroup修复补丁（独立开关控制）
-      - name: 应用LXC/Docker cgroup增量补丁（Android15适配）
-        if: inputs.lxc_docker_enable && inputs.cgroup_patch_enable
+      
+      # ========== 新增：应用LXC&Docker专属补丁（cgroup+overlayfs2） ==========
+      - name: 应用LXC&Docker所需cgroup+overlayfs2补丁
         run: |
-          echo "正在应用LXC/Docker cgroup增量补丁…"
+          echo "=== 开始应用LXC&Docker增量补丁 ==="
           cd kernel_workspace/common
-          # 下载增量补丁（不覆盖原有代码，仅追加/修改差异部分）
-          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/cgroup-fix-android15.patch -O cgroup-fix-android15.patch
-          # 增量应用补丁（-p1 保持路径正确，-N 避免重复应用）
-          patch -p1 -N -F 3 < cgroup-fix-android15.patch || true
-          rm -f cgroup-fix-android15.patch
-
-      # 增量补丁2：overlayfs2 KSU兼容补丁（独立开关控制）
-      - name: 应用Docker overlayfs2增量补丁（KSU兼容）
-        if: inputs.lxc_docker_enable && inputs.overlayfs2_patch_enable
-        run: |
-          echo "正在应用Docker overlayfs2增量补丁…"
-          cd kernel_workspace/common
-          # 下载增量补丁（仅修改overlayfs2与KSU兼容的差异部分）
-          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/overlayfs-ksu-compat.patch -O overlayfs-ksu-compat.patch
-          # 增量应用补丁（-N 防止重复应用，-F 3 容错代码差异）
-          patch -p1 -N -F 3 < overlayfs-ksu-compat.patch || true
-          rm -f overlayfs-ksu-compat.patch
-
-      # LXC/Docker核心配置：按补丁开关增量添加对应配置
-      - name: 添加LXC/Docker增量配置（按补丁开关匹配）
-        if: inputs.lxc_docker_enable
-        run: |
-          cd kernel_workspace
-          echo "正在添加LXC/Docker增量配置…"
-          # 基础容器隔离配置（总开关开启即添加，不依赖具体补丁）
-          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SYSVIPC=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SYSVIPC_SYSCTL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # 仅cgroup补丁启用时，添加cgroup子系统配置
-          if [[ "${{ inputs.cgroup_patch_enable }}" == "true" ]]; then
-            echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_MEM_RES_CTLR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_MEM_RES_CTLR_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_MEM_RES_CTLR_KMEM=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_CPUSET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_BLKIO=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_PERF=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CGROUP_HUGETLB=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_BLK_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_BLK_DEV_THROTTLING=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_MEMCG_SWAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_MEMCG_SWAP_ENABLED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 下载cgroup修复补丁（android15适配）
+          aria2c -s16 -x16 -k1M -q --timeout=30 -o cgroup-fix-android15.patch https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/cgroup-fix-android15.patch
+          if [ ! -f "cgroup-fix-android15.patch" ] || [ ! -s "cgroup-fix-android15.patch" ]; then
+            echo "❌ cgroup补丁下载失败，构建中断"
+            exit 1
+          fi
+          # 应用cgroup补丁（防重复、高容错）
+          patch -p1 -N -F 3 -r cgroup-fix.rejects < cgroup-fix-android15.patch
+          if [ $? -eq 0 ] || [ $? -eq 2 ]; then
+            echo "✅ cgroup修复补丁应用成功（或已应用）"
+          else
+            echo "⚠️ cgroup补丁应用偏移兼容，rejects文件已保留用于调试"
           fi
           
-          # 仅overlayfs2补丁启用时，添加overlayfs2配置
-          if [[ "${{ inputs.overlayfs2_patch_enable }}" == "true" ]]; then
-            echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_OVERLAY_FS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_OVERLAY_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 下载overlayfs2 KSU兼容补丁
+          aria2c -s16 -x16 -k1M -q --timeout=30 -o overlayfs-ksu-compat.patch https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/overlayfs-ksu-compat.patch
+          if [ ! -f "overlayfs-ksu-compat.patch" ] || [ ! -s "overlayfs-ksu-compat.patch" ]; then
+            echo "❌ overlayfs2补丁下载失败，构建中断"
+            exit 1
+          fi
+          # 应用overlayfs2补丁（防重复、高容错）
+          patch -p1 -N -F 3 -r overlayfs-fix.rejects < overlayfs-ksu-compat.patch
+          if [ $? -eq 0 ] || [ $? -eq 2 ]; then
+            echo "✅ overlayfs2 KSU兼容补丁应用成功（或已应用）"
+          else
+            echo "⚠️ overlayfs2补丁应用偏移兼容，rejects文件已保留用于调试"
           fi
           
-          # 通用依赖配置（总开关开启即添加）
-          echo "CONFIG_KEYS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SECURITY_SELINUX=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SECURITY_SELINUX_DISABLE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_EXT4_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_EXT4_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_EXT4_FS_SECURITY=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 清理补丁文件（保留rejects用于调试）
+          rm -f cgroup-fix-android15.patch overlayfs-ksu-compat.patch
+          echo "=== LXC&Docker增量补丁应用完成 ==="
+      # ========== 新增：LXC&Docker补丁步骤结束 ==========
 
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
@@ -491,6 +433,34 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
+      # ========== 新增：添加LXC&Docker必需内核配置 ==========
+      - name: 添加LXC&Docker必需内核配置
+        run: |
+          cd kernel_workspace
+          echo "=== 开始添加LXC&Docker核心配置项 ==="
+          # LXC核心依赖（规避KMI破坏，仅启用基础必需项）
+          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_NET_CLASSID=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_PERF=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MNT_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # Docker overlayfs2驱动依赖（配合补丁生效）
+          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_INDEX=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_OVERLAY_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "=== LXC&Docker必需配置项添加完成 ==="
+      # ========== 新增：LXC&Docker配置步骤结束 ==========
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -715,20 +685,13 @@ jobs:
           else
             KSU_TYPENAME="KSU"
           fi
-          # 按补丁开关生成打包标识
-          DOCKER_SUFFIX=""
-          if [[ "${{ inputs.lxc_docker_enable }}" == "true" ]]; then
-            DOCKER_SUFFIX="_Docker"
-            [[ "${{ inputs.cgroup_patch_enable }}" == "true" ]] && DOCKER_SUFFIX+="_Cgroup"
-            [[ "${{ inputs.overlayfs2_patch_enable }}" == "true" ]] && DOCKER_SUFFIX+="_OverlayFS2"
-          fi
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
             wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/refs/heads/main/zram.zip
           fi
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
-            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}${DOCKER_SUFFIX}.zip ./*
+            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}.zip ./*
           else
-            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}${DOCKER_SUFFIX}.zip ./*
+            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}.zip ./*
           fi
       - name: 上传 Ccache 调试日志
         if: always() && inputs.ccache_debug
@@ -781,14 +744,6 @@ jobs:
             KSU_TYPENAME="KSU"
           fi
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
-          # 生成补丁状态标识（增量开关可视化）
-          DOCKER_STATUS="❌ 未开启LXC/Docker功能"
-          if [[ "${{ inputs.lxc_docker_enable }}" == "true" ]]; then
-            DOCKER_STATUS="✅ LXC/Docker功能已开启"
-            DOCKER_STATUS+=" | cgroup补丁: ${{ inputs.cgroup_patch_enable && '✅ 已应用' || '❌ 未应用' }}"
-            DOCKER_STATUS+=" | overlayfs2补丁: ${{ inputs.overlayfs2_patch_enable && '✅ 已应用' || '❌ 未应用' }}"
-          fi
-          echo "DOCKER_STATUS=$DOCKER_STATUS" >> $GITHUB_ENV
          
       - name: 创建发布
         id: create_release
@@ -801,7 +756,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC&Docker支持（cgroup修复+overlayfs2兼容）
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -811,15 +766,14 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - ${{ env.DOCKER_STATUS }}  # 显示补丁增量开关状态
+            - LXC&Docker支持：✅ 已启用（适配cgroup+overlayfs2驱动）
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC/Docker功能**增量支持**：拆分cgroup/overlayfs2补丁独立开关，可灵活控制是否应用
-            - 补丁均为增量修改，不覆盖原有内核代码，兼容原生功能
+            - 新增LXC&Docker支持，应用专属cgroup修复补丁+overlayfs2 KSU兼容补丁
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

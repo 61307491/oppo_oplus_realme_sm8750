@@ -1,0 +1,27 @@
+From 2cf7548f0e007939b99a12716db5ef0cfe8c03a3 Mon Sep 17 00:00:00 2001
+From: Liudaozhihua <209014837@qq.com>
+Date: Mon, 10 Nov 2025 13:07:48 +0000
+Subject: [PATCH 2/6] Overlayfs : Fixed docker overlay2 drive , patch from
+ @lateautumn233
+
+---
+ fs/overlayfs/util.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/fs/overlayfs/util.c b/fs/overlayfs/util.c
+index 4d39d77de..27b802bc7 100644
+--- a/fs/overlayfs/util.c
++++ b/fs/overlayfs/util.c
+@@ -145,9 +145,7 @@ void ovl_dentry_init_flags(struct dentry *dentry, struct dentry *upperdentry,
+ bool ovl_dentry_weird(struct dentry *dentry)
+ {
+         return dentry->d_flags & (DCACHE_NEED_AUTOMOUNT |
+-                                  DCACHE_MANAGE_TRANSIT |
+-                                  DCACHE_OP_HASH |
+-                                  DCACHE_OP_COMPARE);
++                                  DCACHE_MANAGE_TRANSIT);
+ }
+
+ enum ovl_path_type ovl_path_type(struct dentry *dentry)
+-- 
+2.43.0

@@ -500,7 +500,7 @@ jobs:
         if: inputs.lxc_docker_enable
         run: |
           CGROUP_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/cgroup-fix-android15.patch"
-          OVERLAYFS_PATCH_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/overlayfs-ksu-compat.patch"
+          OVERLAYFS_PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/overlayfs-ksu-compat.patch"
           KERNEL_SRC_DIR="./kernel_workspace/common"
 
           echo "=== 开始应用LXC/Docker增量补丁 ==="

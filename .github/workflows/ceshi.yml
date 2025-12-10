@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 欧加真OKI内核22（含LXC&Docker支持）
+name: 加速版构建 6.6.66 欧加真OKI内核（含LXC&Docker支持）
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -102,8 +102,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
           
           echo "正在克隆源码仓库..."
-          # 核心修改：替换为目标源码仓库，保留原分支和目录命名，适配后续逻辑
-          git clone https://github.com/61307491/android_kernel_common_oneplus_sm8750.git &
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
+          unzip -q common.zip && 
+          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.2_oneplus_13_6.6.66" common &&
+          rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&
           mkdir -p clang18 &&
@@ -387,6 +389,7 @@ jobs:
           rm -f cgroup-fix-android15.patch overlayfs-ksu-compat.patch
           echo "=== LXC&Docker增量补丁应用完成 ==="
       # ========== 新增：LXC&Docker补丁步骤结束 ==========
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -457,6 +460,7 @@ jobs:
           echo "CONFIG_OVERLAY_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "=== LXC&Docker必需配置项添加完成 ==="
       # ========== 新增：LXC&Docker配置步骤结束 ==========
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -657,7 +661,7 @@ jobs:
             curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
             chmod +x patch_linux
             ./patch_linux
-            rm -ff Image
+            rm -f Image
             mv oImage Image
           fi
           

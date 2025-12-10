@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 欧加真OKI内核（含LXC&Docker支持）
+name: 加速版构建 6.6.66 欧加真OKI内核22（含LXC&Docker支持）
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'

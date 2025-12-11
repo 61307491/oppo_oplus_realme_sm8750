@@ -104,7 +104,7 @@ jobs:
           echo "正在克隆源码仓库..."
           aria2c -s16 -x16 -k1M https://codeload.github.com/TheGeniusClub/android_kernel_common_oneplus_sm8750/zip/refs/heads/v14 -o common.zip && 
           unzip -q common.zip && 
-          mv "android_kernel_common_oneplus_sm8750" common &&
+          mv "android_kernel_common_oneplus_sm8750-14" common &&
           rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&

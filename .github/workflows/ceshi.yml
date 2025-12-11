@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 欧加真OKI内核测试（含LXC&Docker支持-修复开机循环）
+name: 加速版构建 6.6.66 欧加真OKI内核（含LXC&Docker支持）
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -26,7 +26,7 @@ on:
         description: '是否开启kpm(仅对sukisu生效; 可能轻微增加耗电，不需要可保持默认关闭)'
         required: true
         type: choice
-        default: 'false'  # ### 关键修改1：默认关闭KPM，避免破坏内核镜像结构
+        default: 'false'
         options:
           - 'true'
           - 'false'
@@ -39,7 +39,7 @@ on:
         description: '是否安装 LZ4KD 补丁(若已开启lz4+zstd补丁则可不开启)'
         required: true
         type: boolean
-        default: 'false'  # ### 关键修改2：默认关闭LZ4KD，避免与加密分区冲突
+        default: 'false'
       bbr_enable:
         description: "是否启用bbr算法(优化上行数据,对手机日用无太大意义甚至可能负优化;false关闭,true仅加入算法,default启用算法并设为默认)"
         required: true
@@ -102,9 +102,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
           
           echo "正在克隆源码仓库..."
-                    aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -o common.zip && 
+          aria2c -s16 -x16 -k1M https://codeload.github.com/TheGeniusClub/android_kernel_common_oneplus_sm8750/zip/refs/heads/v14 -o common.zip && 
           unzip -q common.zip && 
-          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
+          mv "android_kernel_common_oneplus_sm8750" common &&
+          rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&
           mkdir -p clang18 &&
@@ -388,6 +389,7 @@ jobs:
           rm -f cgroup-fix-android15.patch overlayfs-ksu-compat.patch
           echo "=== LXC&Docker增量补丁应用完成 ==="
       # ========== 新增：LXC&Docker补丁步骤结束 ==========
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -430,15 +432,13 @@ jobs:
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          # ### 关键修改3：强制关闭USER_NS，解决解锁阶段重启循环
-          echo "CONFIG_USER_NS=n" >> ./common/arch/arm64/configs/gki_defconfig
           
-      # ========== 新增：添加LXC&Docker必需内核配置（已关闭USER_NS） ==========
+      # ========== 新增：添加LXC&Docker必需内核配置 ==========
       - name: 添加LXC&Docker必需内核配置
         run: |
           cd kernel_workspace
           echo "=== 开始添加LXC&Docker核心配置项 ==="
-          # LXC核心依赖（规避KMI破坏，仅启用基础必需项，关闭USER_NS）
+          # LXC核心依赖（规避KMI破坏，仅启用基础必需项）
           echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -449,7 +449,7 @@ jobs:
           echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_USER_NS=n" >> ./common/arch/arm64/configs/gki_defconfig  # ### 关键修改3：明确关闭USER_NS，双重保障
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MNT_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           # Docker overlayfs2驱动依赖（配合补丁生效）
@@ -460,6 +460,7 @@ jobs:
           echo "CONFIG_OVERLAY_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "=== LXC&Docker必需配置项添加完成 ==="
       # ========== 新增：LXC&Docker配置步骤结束 ==========
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -657,7 +658,7 @@ jobs:
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在应用KPM并修补内核..."
             cd kernel_workspace/common/out/arch/arm64/boot
-            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linuxinux
+            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
             chmod +x patch_linux
             ./patch_linux
             rm -f Image
@@ -755,7 +756,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC&Docker支持（cgroup修复+overlayfs2兼容，已关闭USER_NS解决开机循环）
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC&Docker支持（cgroup修复+overlayfs2兼容）
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -765,7 +766,7 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - LXC&Docker支持：✅ 已启用（适配cgroup+overlayfs2驱动，关闭USER_NS兼容开机）
+            - LXC&Docker支持：✅ 已启用（适配cgroup+overlayfs2驱动）
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
@@ -773,8 +774,7 @@ jobs:
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
             - 新增LXC&Docker支持，应用专属cgroup修复补丁+overlayfs2 KSU兼容补丁
-            - 关闭CONFIG_USER_NS，修复解锁阶段重启循环问题
-            - 默认关闭LZ4KD和KPM，提升开机兼容性
+            - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

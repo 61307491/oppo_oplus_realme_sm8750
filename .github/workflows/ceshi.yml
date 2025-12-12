@@ -1,4 +1,4 @@
-name: 一加13内核开启LXC支持 - LLVM-Clang18 编译版
+name: 一加13内核开启LXC支持 - LLVM-Clang18 编译版（6.6.89）
 on:
   # 触发条件：1. 推送代码到 main 分支；2. 手动触发（支持选择内核分支）
   push:
@@ -18,7 +18,10 @@ jobs:
     env:
       # 全局环境变量（统一管理，便于修改）
       DEFCONFIG: vendor/sm8750-perf_defconfig
-      LXC_PATCH_URL: https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch
+      # LXC 补丁配置（主链接 + 备用链接 + MD5校验值，确保文件完整）
+      LXC_PATCH_MAIN_URL: "https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch"
+      LXC_PATCH_BACKUP_URL: "https://ghproxy.com/https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch"
+      LXC_PATCH_MD5: "d41d8cd98f00b204e9800998ecf8427e"  # 示例MD5，需替换为真实值（下文教你获取）
       # LLVM-Clang18 工具链配置（适配 SM8750/SM8650 芯片组）
       CLANG_DIR: ./clang18
       BUILD_TOOLS_DIR: ./build-tools
@@ -39,15 +42,15 @@ jobs:
           persist-credentials: false
 
       ##########################################################################
-      # 步骤2：安装编译核心依赖（LLVM-Clang 依赖 + 内核编译工具）
+      # 步骤2：安装编译核心依赖（LLVM-Clang 依赖 + 内核编译工具 + MD5校验工具）
       ##########################################################################
       - name: 安装Ubuntu编译依赖
         run: |
           sudo apt update -y > /dev/null 2>&1
           sudo apt install -y \
             git bc bison flex libssl-dev libelf-dev lz4 zstd curl patch aria2 \
-            python3 python3-pip > /dev/null 2>&1
-          echo -e "\033[32m✅ 基础依赖安装完成（含 aria2 多线程下载工具）\033[0m"
+            python3 python3-pip md5sum > /dev/null 2>&1
+          echo -e "\033[32m✅ 基础依赖安装完成（含 aria2 多线程下载 + MD5校验工具）\033[0m"
 
       ##########################################################################
       # 步骤3：并行下载 LLVM-Clang18 工具链 + 内核源码（极致提速）
@@ -120,28 +123,55 @@ jobs:
         timeout-minutes: 20  # 并行下载+解压超时（20分钟足够）
 
       ##########################################################################
-      # 步骤4：下载并应用LXC支持补丁（先测试无冲突，再应用）
+      # 步骤4：下载并应用LXC支持补丁（双重重试 + MD5校验 + 备用链接）
       ##########################################################################
-      - name: 应用LXC支持补丁
+      - name: 下载并应用LXC支持补丁（防损坏）
         run: |
           cd "${KERNEL_DIR}"  # 进入重命名后的内核源码目录
-          echo -e "\033[32m📥 下载LXC支持补丁...\033[0m"
-          # 补丁下载添加重试，避免网络波动导致失败
-          curl -L --progress-bar --retry 3 "${LXC_PATCH_URL}" -o lxc_support.patch
+          PATCH_FILE="lxc_support.patch"
+          echo -e "\033[32m📥 下载LXC支持补丁（主链接）...\033[0m"
 
-          echo -e "\033[32m🔍 测试补丁兼容性（无冲突再应用）...\033[0m"
-          if patch -p1 --dry-run < lxc_support.patch > /dev/null 2>&1; then
+          # 第一步：尝试从主链接下载（重试3次，超时30秒）
+          if ! curl -L --progress-bar --retry 3 --connect-timeout 30 --max-time 60 "${LXC_PATCH_MAIN_URL}" -o "${PATCH_FILE}"; then
+            echo -e "\033[33m⚠️  主链接下载失败，切换到备用链接...\033[0m"
+            # 第二步：从备用链接下载（重试3次）
+            if ! curl -L --progress-bar --retry 3 --connect-timeout 30 --max-time 60 "${LXC_PATCH_BACKUP_URL}" -o "${PATCH_FILE}"; then
+              echo -e "\033[31m❌ 主链接和备用链接均下载失败，构建终止！\033[0m"
+              exit 1
+            fi
+          fi
+
+          # 校验补丁文件完整性（MD5校验，避免损坏）
+          echo -e "\033[32m🔍 校验LXC补丁文件完整性（MD5）...\033[0m"
+          PATCH_ACTUAL_MD5=$(md5sum "${PATCH_FILE}" | awk '{print $1}')
+          if [ "${PATCH_ACTUAL_MD5}" != "${LXC_PATCH_MD5}" ]; then
+            echo -e "\033[31m❌ 补丁文件损坏！实际MD5：${PATCH_ACTUAL_MD5}，期望MD5：${LXC_PATCH_MD5}\033[0m"
+            # 尝试重新下载一次备用链接
+            echo -e "\033[33m⚠️  尝试重新下载备用链接修复...\033[0m"
+            curl -L --progress-bar "${LXC_PATCH_BACKUP_URL}" -o "${PATCH_FILE}"
+            # 二次校验
+            PATCH_ACTUAL_MD5=$(md5sum "${PATCH_FILE}" | awk '{print $1}')
+            if [ "${PATCH_ACTUAL_MD5}" != "${LXC_PATCH_MD5}" ]; then
+              echo -e "\033[31m❌ 补丁文件二次下载仍损坏，构建终止！\033[0m"
+              exit 1
+            fi
+          fi
+          echo -e "\033[32m✅ 补丁文件完整性校验通过\033[0m"
+
+          # 测试并应用补丁（无冲突再执行）
+          echo -e "\033[32m🔍 测试补丁与6.6.89内核兼容性...\033[0m"
+          if patch -p1 --dry-run < "${PATCH_FILE}" > /dev/null 2>&1; then
             echo -e "\033[32m✅ 补丁无冲突，开始应用...\033[0m"
-            patch -p1 < lxc_support.patch
+            patch -p1 < "${PATCH_FILE}"
             echo -e "\033[32m✅ LXC补丁应用完成\033[0m"
           else
-            echo -e "\033[31m❌ 补丁应用冲突，请检查补丁与内核版本（6.6.89）兼容性！\033[0m"
-            # 输出冲突详情，便于排查问题
-            patch -p1 --dry-run < lxc_support.patch
+            echo -e "\033[31m❌ 补丁与6.6.89内核版本冲突！冲突详情如下：\033[0m"
+            # 输出详细冲突日志，便于适配补丁
+            patch -p1 --dry-run < "${PATCH_FILE}"
             exit 1
           fi
         shell: bash
-        timeout-minutes: 3
+        timeout-minutes: 5  # 延长补丁下载+校验超时（5分钟足够）
 
       ##########################################################################
       # 步骤5：配置编译环境并编译内核（LLVM-Clang18 + LXC支持）

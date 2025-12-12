@@ -174,7 +174,7 @@ jobs:
             cd ./KernelSU
             GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
             echo "当前提交哈希: $GIT_COMMIT_HASH"
-                       export KSU_VERSION=$KSU_VERSION
+            export KSU_VERSION=$KSU_VERSION
             for i in {1..3}; do
               KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/tmp-builtin/kernel/Kbuild" | 
                 grep -m1 "KSU_VERSION_API :=" | 
@@ -182,9 +182,9 @@ jobs:
                 tr -d '[:space:]')
               [ -n "$KSU_API_VERSION" ] && break || sleep 1
             done
-            [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
+                       [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
             echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-            VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GITHUB_ENV"$'@cctv18\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'@cctv18'
+            VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'@cctv18\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'@cctv18'
             sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
             sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
             sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
@@ -351,96 +351,96 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
 
-      # 最终版：直接替换内核文件（去掉.patch后缀，覆盖目标文件）
-- name: 直接替换LXC/Docker所需文件（bianyi.zip，去掉.patch后缀）
-  run: |
-    # 核心配置（适配原脚本内核路径）
-    KERNEL_SRC_DIR="./kernel_workspace/common"
-    PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
-    PATCH_ZIP_NAME="bianyi.zip"
-    PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
+      # 最终版：直接替换LXC/Docker所需文件（去掉.patch后缀，覆盖目标文件）
+      - name: 直接替换LXC/Docker所需文件（bianyi.zip，去掉.patch后缀）
+        run: |
+          # 核心配置（适配原脚本内核路径）
+          KERNEL_SRC_DIR="./kernel_workspace/common"
+          PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
+          PATCH_ZIP_NAME="bianyi.zip"
+          PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
 
-    # 日志函数（与原脚本风格统一）
-    log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
-    log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
-    log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
+          # 日志函数（与原脚本风格统一）
+          log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
+          log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
+          log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
 
-    # 关键映射：目标文件路径（内核中要替换的文件）<-> 压缩包内文件名（去掉.patch前）
-    declare -A FILE_MAPPING=(
-      ["build.config.gki"]="build.config.gki.patch"
-      ["fs/overlayfs/params.c"]="params.c.patch"
-      ["fs/overlayfs/super.c"]="super.c.patch"
-      ["fs/overlayfs/util.c"]="util.c.patch"
-      ["include/linux/netdevice.h"]="netdevice.h.patch"
-      ["include/linux/sched.h"]="sched.h.patch"
-      ["kernel/cgroup/cgroup.c"]="cgroup.c.patch"
-      ["module/main.c"]="main.c.patch"
-      ["module/version.c"]="version.c.patch"
-      ["module/pid.c"]="pid.c.patch"
-    )
+          # 关键映射：目标文件路径（内核中要替换的文件）<-> 压缩包内文件名（带.patch）
+          declare -A FILE_MAPPING=(
+            ["build.config.gki"]="build.config.gki.patch"
+            ["fs/overlayfs/params.c"]="params.c.patch"
+            ["fs/overlayfs/super.c"]="super.c.patch"
+            ["fs/overlayfs/util.c"]="util.c.patch"
+            ["include/linux/netdevice.h"]="netdevice.h.patch"
+            ["include/linux/sched.h"]="sched.h.patch"
+            ["kernel/cgroup/cgroup.c"]="cgroup.c.patch"
+            ["module/main.c"]="main.c.patch"
+            ["module/version.c"]="version.c.patch"
+            ["module/pid.c"]="pid.c.patch"
+          )
 
-    # 检查内核目录
-    if [ ! -d "$KERNEL_SRC_DIR" ]; then
-      log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
-    fi
-    cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
+          # 检查内核目录
+          if [ ! -d "$KERNEL_SRC_DIR" ]; then
+            log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
+          fi
+          cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
 
-    log_info "开始处理bianyi.zip文件（直接替换内核目标文件）"
+          log_info "开始处理bianyi.zip文件（直接替换内核目标文件）"
 
-    # 下载压缩包（3次重试，避免网络问题）
-    aria2c -s16 -x16 -k1M -m3 "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME" || log_error "bianyi.zip下载失败（3次重试均失败），请检查URL"
-    if [ ! -f "../$PATCH_ZIP_NAME" ]; then
-      log_error "未找到下载的压缩包：../$PATCH_ZIP_NAME"
-    fi
+          # 下载压缩包（3次重试，避免网络问题）
+          aria2c -s16 -x16 -k1M -m3 "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME" || log_error "bianyi.zip下载失败（3次重试均失败），请检查URL"
+          if [ ! -f "../$PATCH_ZIP_NAME" ]; then
+            log_error "未找到下载的压缩包：../$PATCH_ZIP_NAME"
+          fi
 
-    # 解压压缩包（强制解压，忽略损坏）
-    mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
-    log_info "正在解压压缩包（忽略损坏文件）..."
-    unzip -q -o -DD "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR" || log_error "压缩包解压失败，可能严重损坏"
+          # 解压压缩包（强制解压，忽略损坏）
+          mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
+          log_info "正在解压压缩包（忽略损坏文件）..."
+          unzip -q -o -DD "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR" || log_error "压缩包解压失败，可能严重损坏"
 
-    # 输出解压后的所有文件（方便排查）
-    log_info "压缩包解压完成，所有文件如下："
-    find "../$PATCH_UNZIP_DIR" -type f | tee ./unzip_file_list.txt || log_warn "压缩包内无任何文件"
+          # 输出解压后的所有文件（方便排查）
+          log_info "压缩包解压完成，所有文件如下："
+          find "../$PATCH_UNZIP_DIR" -type f | tee ./unzip_file_list.txt || log_warn "压缩包内无任何文件"
 
-    # 逐个查找并替换目标文件（去掉.patch后缀）
-    log_info "开始直接替换内核对应文件（去掉.patch后缀）"
-    for target_path in "${!FILE_MAPPING[@]}"; do
-      # 压缩包内的源文件名（带.patch）
-      patch_filename="${FILE_MAPPING[$target_path]}"
-      # 递归查找压缩包内的源文件
-      source_file=$(find "../$PATCH_UNZIP_DIR" -name "$patch_filename" -type f | head -n1)
+          # 逐个查找并替换目标文件（去掉.patch后缀）
+          log_info "开始直接替换内核对应文件（去掉.patch后缀）"
+          for target_path in "${!FILE_MAPPING[@]}"; do
+            # 压缩包内的源文件名（带.patch）
+            patch_filename="${FILE_MAPPING[$target_path]}"
+            # 递归查找压缩包内的源文件
+            source_file=$(find "../$PATCH_UNZIP_DIR" -name "$patch_filename" -type f | head -n1)
 
-      if [ -z "$source_file" ]; then
-        log_warn "未找到源文件：$patch_filename，跳过替换目标文件：$target_path"
-        continue
-      fi
+            if [ -z "$source_file" ]; then
+              log_warn "未找到源文件：$patch_filename，跳过替换目标文件：$target_path"
+              continue
+            fi
 
-      # 目标文件完整路径
-      target_full_path="$KERNEL_SRC_DIR/$target_path"
-      # 确保目标文件所在目录存在
-      target_dir=$(dirname "$target_full_path")
-      if [ ! -d "$target_dir" ]; then
-        log_warn "目标文件目录不存在：$target_dir，跳过替换"
-        continue
-      fi
+            # 目标文件完整路径
+            target_full_path="$KERNEL_SRC_DIR/$target_path"
+            # 确保目标文件所在目录存在
+            target_dir=$(dirname "$target_full_path")
+            if [ ! -d "$target_dir" ]; then
+              log_warn "目标文件目录不存在：$target_dir，跳过替换"
+              continue
+            fi
 
-      # 直接替换文件（覆盖原有文件）
-      log_info "正在替换：$target_full_path <- $source_file"
-      cp -f "$source_file" "$target_full_path"
+            # 直接替换文件（覆盖原有文件）
+            log_info "正在替换：$target_full_path <- $source_file"
+            cp -f "$source_file" "$target_full_path"
 
-      # 校验替换结果
-      if [ $? -eq 0 ]; then
-        log_info "替换成功：$target_path"
-      else
-        log_warn "替换失败：$target_path（可能权限不足，忽略）"
-      fi
-    done
+            # 校验替换结果
+            if [ $? -eq 0 ]; then
+              log_info "替换成功：$target_path"
+            else
+              log_warn "替换失败：$target_path（可能权限不足，忽略）"
+            fi
+          done
 
-    # 清理临时文件
-    rm -f "../$PATCH_ZIP_NAME" ./unzip_file_list.txt
-    rm -rf "../$PATCH_UNZIP_DIR"
-    log_info "文件替换完成，临时文件已清理"
-    
+          # 清理临时文件
+          rm -f "../$PATCH_ZIP_NAME" ./unzip_file_list.txt
+          rm -rf "../$PATCH_UNZIP_DIR"
+          log_info "文件替换完成，临时文件已清理"
+          
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -644,7 +644,7 @@ jobs:
           
           echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
-          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
+          echo 'export LD_PRELOAD="'$$PRELOAD_LIBS'"' >> test-wrapper.sh
           echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
           echo 'export FAKETIME="'$FAKETIME'"' >> test-wrapper.sh
           echo 'echo ">>> Wrapper 内部环境检查完毕."' >> test-wrapper.sh
@@ -789,14 +789,14 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - 新增LXC/Docker所需10个增量补丁（优化cgroup/overlayfs2等核心功能）
+            - 新增LXC/Docker所需文件（直接替换内核对应文件，优化cgroup/overlayfs2等核心功能）
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 优化LXC/Docker补丁应用逻辑，适配压缩包内任意路径结构，避免构建中断
+            - 优化LXC/Docker相关文件部署逻辑，改为直接替换内核文件（去掉.patch后缀），彻底解决补丁格式错误问题
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

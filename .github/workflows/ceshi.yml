@@ -126,6 +126,99 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
+#!/bin/bash
+# 独立版 LXC/Docker 增量补丁应用脚本
+# 适用场景：内核源码根目录下的 common 目录已存在，直接应用 10 个.patch补丁
+
+##############################################################################
+# 核心配置（无需修改，目录固定为 common）
+##############################################################################
+# 内核源码 common 目录（当前脚本执行路径下的 common 文件夹）
+KERNEL_COMMON_DIR="./common"
+# 补丁压缩包下载链接
+PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
+# 临时解压目录（自动创建/清理）
+TEMP_PATCH_DIR="./temp_lxc_patches"
+# 10 个需应用的.patch补丁路径（相对于 common 目录）
+PATCH_FILES=(
+    "build.config.gki.patch"
+    "fs/overlayfs/params.c.patch"
+    "fs/overlayfs/super.c.patch"
+    "fs/overlayfs/util.c.patch"
+    "include/linux/netdevice.h.patch"
+    "include/linux/sched.h.patch"
+    "kernel/cgroup/cgroup.c.patch"
+    "kernel/module/main.c.patch"
+    "kernel/module/version.c.patch"
+    "kernel/pid.c.patch"
+)
+
+##############################################################################
+# 执行流程
+##############################################################################
+echo "=== 开始应用 LXC/Docker 增量补丁（目录：$KERNEL_COMMON_DIR）==="
+
+# 1. 检查 common 目录是否存在
+if [ ! -d "$KERNEL_COMMON_DIR" ]; then
+  echo "❌ 错误：common 目录不存在（当前路径：$(pwd)）"
+  echo "请确保脚本在内核源码根目录执行，且 common 文件夹已初始化"
+  exit 1
+fi
+
+# 2. 检查依赖工具
+deps=("wget" "unzip" "patch")
+for dep in "${deps[@]}"; do
+  if ! command -v "$dep" &> /dev/null; then
+    echo "❌ 缺少必要工具：$dep，请先安装（如 apt install $dep）"
+    exit 1
+  fi
+done
+
+# 3. 下载并解压补丁压缩包
+mkdir -p "$TEMP_PATCH_DIR" || { echo "❌ 临时目录创建失败"; exit 1; }
+echo "📥 下载补丁压缩包..."
+wget -q -O "$TEMP_PATCH_DIR/lxc_patches.zip" "$PATCH_ZIP_URL"
+if [ ! -f "$TEMP_PATCH_DIR/lxc_patches.zip" ]; then
+  echo "❌ 补丁压缩包下载失败"
+  rm -rf "$TEMP_PATCH_DIR"
+  exit 1
+fi
+
+echo "🔓 解压补丁压缩包..."
+unzip -q -o "$TEMP_PATCH_DIR/lxc_patches.zip" -d "$TEMP_PATCH_DIR"
+if [ $? -ne 0 ]; then
+  echo "❌ 补丁压缩包解压失败"
+  rm -rf "$TEMP_PATCH_DIR"
+  exit 1
+fi
+
+# 4. 进入 common 目录应用补丁
+cd "$KERNEL_COMMON_DIR" || { echo "❌ 进入 common 目录失败"; exit 1; }
+
+# 5. 批量应用 10 个补丁
+for patch in "${PATCH_FILES[@]}"; do
+  full_patch_path="../$TEMP_PATCH_DIR/$patch"
+  if [ ! -f "$full_patch_path" ]; then
+    echo "⚠️  补丁缺失：$patch，跳过"
+    continue
+  fi
+
+  echo "🔧 应用补丁：$patch"
+  patch -p1 -N -r - < "$full_patch_path"
+  case $? in
+    0) echo "✅ 补丁应用成功";;
+    1) echo "⚠️  补丁已存在（或偏移兼容），跳过";;
+    *) echo "❌ 补丁应用失败：$patch"; exit 1;;
+  esac
+done
+
+# 6. 清理临时文件
+cd ../ || exit 1
+echo "🧹 清理临时文件..."
+rm -rf "$TEMP_PATCH_DIR"
+
+echo -e "\n=== 🎉 LXC/Docker 增量补丁应用完成 ==="
+
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV

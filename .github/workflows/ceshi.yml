@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 222欧加真OKI内核
+name: 加速版构建 6.6.66 欧加真O222KI内核
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -128,67 +128,6 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
-
-      # ===================== 单独列出：GitHub下载10个增量补丁（bianyi.zip）=====================
-      - name: 下载并解压10个增量补丁（bianyi.zip）
-        run: |
-          cd kernel_workspace
-          # 安装aria2c（高并发下载工具，适配GitHub链接）
-          sudo apt-get install -y aria2
-          
-          # GitHub补丁包直链（单独列出，便于修改维护）
-          PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/bianyi.zip"
-          
-          # ===================== 单独列出：GitHub下载10个增量补丁（bianyi.zip）=====================
-- name: 下载并解压10个增量补丁（bianyi.zip）
-  run: |
-    cd kernel_workspace
-    # 安装aria2c（高并发下载工具，适配GitHub链接）
-    sudo apt-get install -y aria2
-    
-    # GitHub原始文件链接（关键修改：将blob改为raw，获取可直接下载的文件）
-    PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/bianyi.zip"
-    
-    # 下载补丁包（移除无效参数，保留核心配置）
-    echo "正在从GitHub下载10个增量补丁包，链接：$PATCH_URL"
-    aria2c -s 16 -x 16 -k 1M \
-      --no-check-certificate \
-      --allow-overwrite=true \
-      -o bianyi.zip \
-      "$PATCH_URL"
-    
-    # 双重验证下载有效性（文件存在+大小≥1MB，避免下载失败）
-    if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1048576 ]; then
-      echo "❌ 补丁包下载失败！请检查链接是否有效（当前链接：$PATCH_URL）"
-      exit 1
-    fi
-    
-    # 解压补丁到内核源码目录（精准覆盖对应文件）
-    echo "正在解压并应用补丁..."
-    unzip -o bianyi.zip -d common/
-    
-    # 校验10个关键补丁文件完整性
-    CHECK_FILES=(
-        "common/build.config.gki"
-        "common/fs/overlayfs/params.c"
-        "common/fs/overlayfs/super.c"
-        "common/fs/overlayfs/util.c"
-        "common/include/linux/netdevice.h"
-        "common/include/linux/sched.h"
-        "common/kernel/cgroup/cgroup.c"
-        "common/kernel/module/main.c"
-        "common/kernel/module/version.c"
-        "common/kernel/cgroup/pid.c"
-    )
-    for file in "${CHECK_FILES[@]}"; do
-        if [ ! -f "$file" ]; then
-            echo "❌ 关键补丁文件缺失：$file"
-            exit 1
-        fi
-    done
-    echo "✅ 10个增量补丁已成功应用到内核源码"
-# ===================== 补丁下载步骤结束 =====================
-
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV
@@ -340,7 +279,7 @@ jobs:
             echo "正在添加KernelSU Next补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             #由于KernelSU Next尚未更新并适配susfs 2.0.0，故回退至susfs 1.5.12
-            cd susfs4ksu && git checkout f450ec00bf592d080f59b01ff6f9242456c9a427 && cd ..
+            cd susfs4ksu && git checkout f4550ec00bf592d080f59b01ff6f9242456c9a427 && cd ..
             git clone https://github.com/WildKernels/kernel_patches.git
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
@@ -378,7 +317,7 @@ jobs:
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
-            patch -p1 < 10_enable_s_susfs_for_ksu.patch || true
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
             #为MKSU修正susfs 2.0.0补丁
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
             patch -p1 < mksu_supercalls.patch || true
@@ -496,6 +435,64 @@ jobs:
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
+      # ====================== 新增：应用 LXC/Docker 增量补丁 ======================
+      - name: 应用 LXC/Docker 核心增量补丁（cgroup+overlayfs）
+        run: |
+          echo "=== 开始下载并应用 LXC/Docker 核心增量补丁 ==="
+          cd kernel_workspace
+          # 1. 下载补丁压缩包
+          echo "📥 下载 LXC/Docker 补丁压缩包..."
+          aria2c -s16 -x16 -k1M https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip -o lxc_docker_patches.zip
+          if [ ! -f "lxc_docker_patches.zip" ]; then
+            echo "❌ LXC/Docker 补丁压缩包下载失败"
+            exit 1
+          fi
+          # 2. 解压补丁压缩包
+          echo "🔓 解压 LXC/Docker 补丁压缩包..."
+          unzip -q -o lxc_docker_patches.zip -d lxc_docker_patches
+          if [ $? -ne 0 ]; then
+            echo "❌ LXC/Docker 补丁压缩包解压失败"
+            exit 1
+          fi
+          # 3. 进入内核源码目录准备应用补丁
+          cd common
+          # 4. 定义需要应用的10个核心补丁路径（与压缩包内路径一致）
+          PATCH_FILES=(
+              "../lxc_docker_patches/build.config.gki.patch"
+              "../lxc_docker_patches/fs/overlayfs/params.c.patch"
+              "../lxc_docker_patches/fs/overlayfs/super.c.patch"
+              "../lxc_docker_patches/fs/overlayfs/util.c.patch"
+              "../lxc_docker_patches/include/linux/netdevice.h.patch"
+              "../lxc_docker_patches/include/linux/sched.h.patch"
+              "../lxc_docker_patches/kernel/cgroup/cgroup.c.patch"
+              "../lxc_docker_patches/kernel/module/main.c.patch"
+              "../lxc_docker_patches/kernel/module/version.c.patch"
+              "../lxc_docker_patches/kernel/pid.c.patch"
+          )
+          # 5. 批量应用补丁，兼容重复应用场景
+          for patch in "${PATCH_FILES[@]}"; do
+            if [ ! -f "$patch" ]; then
+              echo "⚠️  补丁文件缺失：$patch，跳过该补丁"
+              continue
+            fi
+            echo "🔧 正在应用补丁：$patch"
+            patch -p1 -N -r - < "$patch"
+            if [ $? -eq 0 ]; then
+              echo "✅ 补丁应用成功：$patch"
+            elif [ $? -eq 1 ]; then
+              echo "⚠️  补丁已存在（或偏移兼容）：$patch，跳过重复应用"
+            else
+              echo "❌ 补丁应用失败：$patch"
+              exit 1
+            fi
+          done
+          # 6. 清理临时文件
+          echo "🧹 清理 LXC/Docker 补丁临时文件..."
+          cd ../
+          rm -rf lxc_docker_patches.zip lxc_docker_patches
+          echo "=== LXC/Docker 核心增量补丁应用完成 ==="
+      # ====================== 新增步骤结束 ======================
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -722,7 +719,7 @@ jobs:
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在应用KPM并修补内核..."
             cd kernel_workspace/common/out/arch/arm64/boot
-            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/p/patch_linux
+            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
             chmod +x patch_linux
             ./patch_linux
             rm -f Image
@@ -836,7 +833,7 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增10个增量补丁（含cgroup、overlayfs2等核心模块优化，适配LXC/Docker支持）
+            - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

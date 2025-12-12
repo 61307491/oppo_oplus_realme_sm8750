@@ -129,24 +129,32 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-      # ===================== 修复后：应用10个增量补丁（bianyi.zip）=====================
+      # ===================== 单独列出：GitHub下载10个增量补丁（bianyi.zip）=====================
       - name: 下载并解压10个增量补丁（bianyi.zip）
         run: |
           cd kernel_workspace
-          # 安装aria2c（高并发下载工具，适配微云分享链接）
+          # 安装aria2c（高并发下载工具，适配GitHub链接）
           sudo apt-get install -y aria2
           
-          # 微云分享链接直接下载（自动跳转直链，无需登录）
-          echo "正在从微云下载10个增量补丁包..."
-          aria2c -s 16 -x 16 -k 1M "https://share.weiyun.com/636fl714" -o bianyi.zip --allow-overwrite=true --no-check-certificate --follow-metalink=true
+          # GitHub补丁包直链（单独列出，便于修改维护）
+          PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/bianyi.zip"
           
-          # 验证下载是否成功（微云下载后文件名可能为index.html，需判断）
-          if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1024 ]; then
-            echo "❌ 补丁包下载失败，可能是链接失效或需要提取码"
+          # 下载补丁包（GitHub需添加 --follow-location 跟随跳转，获取原始文件）
+          echo "正在从GitHub下载10个增量补丁包，链接：$PATCH_URL"
+          aria2c -s 16 -x 16 -k 1M \
+            --follow-location=true \
+            --no-check-certificate \
+            --allow-overwrite=true \
+            -o bianyi.zip \
+            "$PATCH_URL"
+          
+          # 双重验证下载有效性（文件存在+大小≥1MB，避免下载到HTML页面）
+          if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1048576 ]; then
+            echo "❌ 补丁包下载失败！请检查GitHub链接是否有效（需为原始文件链接，而非预览页）"
             exit 1
           fi
           
-          # 解压补丁到内核源码目录（覆盖对应文件，保持路径一致）
+          # 解压补丁到内核源码目录（精准覆盖对应文件）
           echo "正在解压并应用补丁..."
           unzip -o bianyi.zip -d common/
           
@@ -170,8 +178,7 @@ jobs:
               fi
           done
           echo "✅ 10个增量补丁已成功应用到内核源码"
-      # ===================== 新增步骤结束 =====================
-
+      # ===================== 补丁下载步骤结束 =====================
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV

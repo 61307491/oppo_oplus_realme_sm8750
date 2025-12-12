@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       kernel_branch:
-        description: '内核分支（默认：oneplus/sm8750_6.6 稳定版）'
+        description: '内核分支（默认：oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89）'
         required: true
-        default: 'oneplus/sm8750_6.6'
+        default: 'oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89'
         type: string
 
 jobs:
@@ -18,14 +18,15 @@ jobs:
     env:
       # 全局环境变量（统一管理，便于修改）
       DEFCONFIG: vendor/sm8750-perf_defconfig
-      KERNEL_REPO: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8750.git
       LXC_PATCH_URL: https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch
       # LLVM-Clang18 工具链配置（适配 SM8750/SM8650 芯片组）
       CLANG_DIR: ./clang18
       BUILD_TOOLS_DIR: ./build-tools
-      # 工具链下载地址（多线程加速，已验证链接有效）
       CLANG_URL: "https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip"
       BUILD_TOOLS_URL: "https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip"
+      # 内核源码配置（多线程下载，指定 6.6.89 版本）
+      KERNEL_ZIP_URL: "https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip"
+      KERNEL_DIR: ./common  # 源码解压后目录名（与 mv 命令一致）
 
     steps:
       ##########################################################################
@@ -49,87 +50,81 @@ jobs:
           echo -e "\033[32m✅ 基础依赖安装完成（含 aria2 多线程下载工具）\033[0m"
 
       ##########################################################################
-      # 步骤3：下载 LLVM-Clang18 工具链 + 构建工具（并行加速 + 完整性校验）
+      # 步骤3：并行下载 LLVM-Clang18 工具链 + 内核源码（极致提速）
       ##########################################################################
-      - name: 下载并解压 LLVM-Clang18 工具链及构建工具
+      - name: 并行下载工具链、构建工具及内核源码
         run: |
-          # 创建工具链和构建工具目录
+          # 创建所需目录
           mkdir -p "${CLANG_DIR}" "${BUILD_TOOLS_DIR}"
-          echo -e "\033[32m🔽 并行下载 LLVM-Clang18 工具链和构建工具（多线程加速）...\033[0m"
+          echo -e "\033[32m🔽 并行下载工具链、构建工具及内核源码（16线程加速）...\033[0m"
 
-          # 并行后台下载（16线程，提升速度），等待下载完成
+          # 3个任务并行后台运行（工具链 + 构建工具 + 内核源码）
           aria2c -s16 -x16 -k1M -q "${CLANG_URL}" -o clang.zip &
           aria2c -s16 -x16 -k1M -q "${BUILD_TOOLS_URL}" -o build-tools.zip &
-          wait  # 关键：确保两个下载任务完全完成后再执行后续步骤
+          aria2c -s16 -x16 -k1M -q "${KERNEL_ZIP_URL}" -o common.zip &
+          wait  # 等待所有下载任务完全完成，避免后续解压失败
 
-          # 校验下载文件是否存在（避免下载中断导致文件缺失）
-          if [ ! -f "clang.zip" ] || [ ! -f "build-tools.zip" ]; then
-            echo -e "\033[31m❌ 工具链或构建工具下载失败，文件缺失！\033[0m"
+          # 校验所有下载文件是否存在
+          if [ ! -f "clang.zip" ] || [ ! -f "build-tools.zip" ] || [ ! -f "common.zip" ]; then
+            echo -e "\033[31m❌ 工具链、构建工具或内核源码下载失败，文件缺失！\033[0m"
             exit 1
           fi
 
-          # 解压 LLVM-Clang18 工具链（静默解压，节省时间）
+          # 解压 LLVM-Clang18 工具链
           echo -e "\033[32m📦 解压 LLVM-Clang18 工具链...\033[0m"
           unzip -q clang.zip -d "${CLANG_DIR}" || {
             echo -e "\033[31m❌ 工具链压缩包损坏，解压失败！\033[0m"
             exit 1
           }
 
-          # 解压构建工具（静默解压）
+          # 解压构建工具
           echo -e "\033[32m📦 解压构建工具...\033[0m"
           unzip -q build-tools.zip -d "${BUILD_TOOLS_DIR}" || {
             echo -e "\033[31m❌ 构建工具压缩包损坏，解压失败！\033[0m"
             exit 1
           }
 
-          # 清理压缩包，节省存储空间
-          rm -rf clang.zip build-tools.zip
+          # 解压内核源码（按你的脚本逻辑重命名目录）
+          echo -e "\033[32m📦 解压内核源码（6.6.89版本）...\033[0m"
+          unzip -q common.zip || {
+            echo -e "\033[31m❌ 内核源码压缩包损坏，解压失败！\033[0m"
+            exit 1
+          }
+          # 重命名源码目录（避免长目录名问题）
+          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" "${KERNEL_DIR}"
+          if [ ! -d "${KERNEL_DIR}" ]; then
+            echo -e "\033[31m❌ 内核源码目录重命名失败！\033[0m"
+            exit 1
+          fi
 
-          # 配置工具链路径并写入环境变量（供后续步骤使用）
+          # 清理所有压缩包，节省存储空间
+          rm -rf clang.zip build-tools.zip common.zip
+
+          # 配置工具链路径并写入环境变量
           export CLANG_PATH=$(pwd)/"${CLANG_DIR}"/bin
           echo "CLANG_PATH=${CLANG_PATH}" >> $GITHUB_ENV
-          # 配置构建工具路径（部分内核编译依赖）
+          # 配置构建工具路径
           export PATH=$(pwd)/"${BUILD_TOOLS_DIR}"/bin:$PATH
           echo "PATH=${PATH}" >> $GITHUB_ENV
 
-          # 验证工具链可用性（最可靠的校验方式）
+          # 验证工具链和源码可用性
           echo -e "\033[32m✅ 验证 LLVM-Clang18 工具链版本...\033[0m"
           if [ ! -f "${CLANG_PATH}/clang" ]; then
             echo -e "\033[31m❌ 未找到 Clang 可执行文件，工具链解压不完整！\033[0m"
             exit 1
           fi
-          # 获取实际工具链版本并输出
           CLANG_ACTUAL_VERSION=$(${CLANG_PATH}/clang --version | head -n1 | awk '{print $3}')
-          echo -e "\033[32m✅ LLVM-Clang18 工具链准备完成（实际版本：${CLANG_ACTUAL_VERSION}）\033[0m"
+          echo -e "\033[32m✅ LLVM-Clang18 工具链准备完成（版本：${CLANG_ACTUAL_VERSION}）\033[0m"
+          echo -e "\033[32m✅ 内核源码准备完成（目录：${KERNEL_DIR}，版本：6.6.89）\033[0m"
         shell: bash
-        timeout-minutes: 15  # 工具链下载+解压超时（15分钟足够）
+        timeout-minutes: 20  # 并行下载+解压超时（20分钟足够）
 
       ##########################################################################
-      # 步骤4：拉取一加13官方内核源码（已验证分支存在）
-      ##########################################################################
-      - name: 拉取一加13内核源码
-        run: |
-          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}"
-          echo -e "\033[32m📥 拉取内核源码（分支：${KERNEL_BRANCH}）...\033[0m"
-          # 克隆指定分支，浅克隆提速（仅拉取最新代码）
-          git clone -b "${KERNEL_BRANCH}" --depth 1 "${KERNEL_REPO}" ./op13_kernel
-          cd ./op13_kernel
-          # 验证当前分支是否正确，避免拉取错误
-          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          if [ "${CURRENT_BRANCH}" != "${KERNEL_BRANCH}" ]; then
-            echo -e "\033[31m❌ 内核分支拉取错误，实际分支：${CURRENT_BRANCH}\033[0m"
-            exit 1
-          fi
-          echo -e "\033[32m✅ 内核源码拉取完成，当前分支：${CURRENT_BRANCH}\033[0m"
-        shell: bash
-        timeout-minutes: 5
-
-      ##########################################################################
-      # 步骤5：下载并应用LXC支持补丁（先测试无冲突，再应用）
+      # 步骤4：下载并应用LXC支持补丁（先测试无冲突，再应用）
       ##########################################################################
       - name: 应用LXC支持补丁
         run: |
-          cd ./op13_kernel
+          cd "${KERNEL_DIR}"  # 进入重命名后的内核源码目录
           echo -e "\033[32m📥 下载LXC支持补丁...\033[0m"
           # 补丁下载添加重试，避免网络波动导致失败
           curl -L --progress-bar --retry 3 "${LXC_PATCH_URL}" -o lxc_support.patch
@@ -140,7 +135,7 @@ jobs:
             patch -p1 < lxc_support.patch
             echo -e "\033[32m✅ LXC补丁应用完成\033[0m"
           else
-            echo -e "\033[31m❌ 补丁应用冲突，请检查补丁与内核分支兼容性！\033[0m"
+            echo -e "\033[31m❌ 补丁应用冲突，请检查补丁与内核版本（6.6.89）兼容性！\033[0m"
             # 输出冲突详情，便于排查问题
             patch -p1 --dry-run < lxc_support.patch
             exit 1
@@ -149,11 +144,11 @@ jobs:
         timeout-minutes: 3
 
       ##########################################################################
-      # 步骤6：配置编译环境并编译内核（LLVM-Clang18 + LXC支持）
+      # 步骤5：配置编译环境并编译内核（LLVM-Clang18 + LXC支持）
       ##########################################################################
       - name: 配置并编译内核
         run: |
-          cd ./op13_kernel
+          cd "${KERNEL_DIR}"  # 进入内核源码目录
           # 导入 LLVM-Clang18 工具链路径
           CLANG_PATH="${{ env.CLANG_PATH }}"
 
@@ -181,7 +176,7 @@ jobs:
           make O=./build olddefconfig 2>&1 | grep -E "CONFIG_|#" || true
 
           echo -e "\033[32m🚀 开始编译内核（CPU核心数：$(nproc)，多线程加速）...\033[0m"
-          echo -e "\033[33m📝 编译日志将保存到：./op13_kernel/build/build.log\033[0m"
+          echo -e "\033[33m📝 编译日志将保存到：${KERNEL_DIR}/build/build.log\033[0m"
           # 编译时输出关键进度（避免 GitHub Actions 静默超时断开）
           make O=./build -j$(nproc) 2>&1 | tee ./build/build.log | grep -E "CC|LD|AR|OBJCOPY" || true
 
@@ -200,7 +195,7 @@ jobs:
           DEFCONFIG: ${{ env.DEFCONFIG }}
 
       ##########################################################################
-      # 步骤7：整理编译产物（内核镜像 + 模块打包，便于刷入使用）
+      # 步骤6：整理编译产物（内核镜像 + 模块打包，便于刷入使用）
       ##########################################################################
       - name: 整理并归档产物
         run: |
@@ -208,18 +203,18 @@ jobs:
           mkdir -p ./final_output
           echo -e "\033[32m📦 整理编译产物...\033[0m"
 
-          # 复制内核镜像（重命名，包含工具链和分支信息，便于识别）
-          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}"
-          cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel_LLVMClang18_${KERNEL_BRANCH}.img
+          # 复制内核镜像（重命名，包含工具链和版本信息，便于识别）
+          KERNEL_VERSION="6.6.89"
+          cp "${KERNEL_DIR}/build/arch/arm64/boot/Image" ./final_output/OnePlus13_LXC_Kernel_LLVMClang18_${KERNEL_VERSION}.img
 
           # 打包内核模块（LXC容器运行必需依赖）
-          if find ./op13_kernel/build -name "*.ko" | grep -q .; then
-            find ./op13_kernel/build -name "*.ko" | xargs tar -zcf ./final_output/kernel_modules_lxc.tar.gz
-            echo -e "\033[32m✅ 内核模块打包完成（LXC容器依赖）\033[0m"
+          if find "${KERNEL_DIR}/build" -name "*.ko" | grep -q .; then
+            find "${KERNEL_DIR}/build" -name "*.ko" | xargs tar -zcf ./final_output/kernel_modules_lxc_${KERNEL_VERSION}.tar.gz
+            echo -e "\033[32m✅ 内核模块打包完成（LXC容器依赖，版本：${KERNEL_VERSION}）\033[0m"
           else
             echo -e "\033[33m⚠️  未找到内核模块文件，可能是编译配置限制\033[0m"
             # 输出模块搜索结果，便于排查
-            find ./op13_kernel/build -name "*.ko"
+            find "${KERNEL_DIR}/build" -name "*.ko"
           fi
 
           # 输出产物清单（直观展示构建结果）
@@ -228,12 +223,12 @@ jobs:
         shell: bash
 
       ##########################################################################
-      # 步骤8：上传产物到GitHub Actions（保留90天，可直接下载）
+      # 步骤7：上传产物到GitHub Actions（保留90天，可直接下载）
       ##########################################################################
       - name: 归档产物供下载
         uses: actions/upload-artifact@v4
         with:
-          name: 一加13-LXC内核-LLVMClang18-${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}
+          name: 一加13-LXC内核-LLVMClang18-6.6.89
           path: ./final_output/*
           retention-days: 90  # 产物保留90天，可按需调整（1-90天）
           if-no-files-found: error  # 若产物缺失，构建标记为失败

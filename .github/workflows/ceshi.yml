@@ -130,42 +130,48 @@ jobs:
           done
 
       # ===================== 新增：应用10个增量补丁（bianyi.zip）=====================
-      - name: 下载并解压10个增量补丁（bianyi.zip）
-        run: |
-          cd kernel_workspace
-          # 安装阿里云盘CLI（用于稳定下载分享文件）
-          wget https://github.com/tickstep/aliyunpan/releases/download/v0.3.10/aliyunpan-v0.3.10-linux-amd64.zip -O aliyunpan.zip
-          unzip -q aliyunpan.zip && chmod +x aliyunpan-linux-amd64 && mv aliyunpan-linux-amd64 /usr/local/bin/aliyunpan
-          
-          # 下载bianyi.zip（阿里云盘分享链接）
-          echo "正在下载10个增量补丁包..."
-          aliyunpan download -f "https://www.alipan.com/t/v5vmHvpEH1UAUmH4GfdR" -o ./
-          
-          # 解压补丁到内核源码目录（覆盖对应文件，保持路径一致）
-          echo "正在解压并应用补丁..."
-          unzip -o bianyi.zip -d common/
-          
-          # 校验10个关键补丁文件完整性
-          CHECK_FILES=(
-              "common/build.config.gki"
-              "common/fs/overlayfs/params.c"
-              "common/fs/overlayfs/super.c"
-              "common/fs/overlayfs/util.c"
-              "common/include/linux/netdevice.h"
-              "common/include/linux/sched.h"
-              "common/kernel/cgroup/cgroup.c"
-              "common/kernel/module/main.c"
-              "common/kernel/module/version.c"
-              "common/kernel/cgroup/pid.c"
-          )
-          for file in "${CHECK_FILES[@]}"; do
-              if [ ! -f "$file" ]; then
-                  echo "❌ 关键补丁文件缺失：$file"
-                  exit 1
-              fi
-          done
-          echo "✅ 10个增量补丁已成功应用到内核源码"
-      # ===================== 新增步骤结束 =====================
+- name: 下载并解压10个增量补丁（bianyi.zip）
+  run: |
+    cd kernel_workspace
+    # 安装aria2c（高并发下载工具，适配阿里云盘分享直链）
+    sudo apt-get install -y aria2
+    
+    # 直接通过分享链接下载（无需CLI，利用aria2c突破下载限制）
+    echo "正在下载10个增量补丁包..."
+    aria2c -s 16 -x 16 -k 1M "https://www.alipan.com/t/v5vmHvpEH1UAUmH4GfdR" -o bianyi.zip --allow-overwrite=true
+    
+    # 验证下载是否成功
+    if [ ! -f "bianyi.zip" ]; then
+      echo "❌ 补丁包下载失败，请检查分享链接是否有效"
+      exit 1
+    fi
+    
+    # 解压补丁到内核源码目录（覆盖对应文件，保持路径一致）
+    echo "正在解压并应用补丁..."
+    unzip -o bianyi.zip -d common/
+    
+    # 校验10个关键补丁文件完整性
+    CHECK_FILES=(
+        "common/build.config.gki"
+        "common/fs/overlayfs/params.c"
+        "common/fs/overlayfs/super.c"
+        "common/fs/overlayfs/util.c"
+        "common/include/linux/netdevice.h"
+        "common/include/linux/sched.h"
+        "common/kernel/cgroup/cgroup.c"
+        "common/kernel/module/main.c"
+        "common/kernel/module/version.c"
+        "common/kernel/cgroup/pid.c"
+    )
+    for file in "${CHECK_FILES[@]}"; do
+        if [ ! -f "$file" ]; then
+            echo "❌ 关键补丁文件缺失：$file"
+            exit 1
+        fi
+    done
+    echo "✅ 10个增量补丁已成功应用到内核源码"
+# ===================== 新增步骤结束 =====================
+
 
       - name: 配置ccache目录
         run: |

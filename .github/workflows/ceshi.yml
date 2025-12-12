@@ -351,82 +351,96 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
 
-      # 修复后的LXC/Docker补丁应用步骤
-      - name: 应用LXC/Docker所需10个增量补丁（bianyi.zip）
-        run: |
-          # 核心配置（适配原脚本内核路径）
-          KERNEL_SRC_DIR="./kernel_workspace/common"
-          PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
-          PATCH_ZIP_NAME="bianyi.zip"
-          PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
+      # 最终版：直接替换内核文件（去掉.patch后缀，覆盖目标文件）
+- name: 直接替换LXC/Docker所需文件（bianyi.zip，去掉.patch后缀）
+  run: |
+    # 核心配置（适配原脚本内核路径）
+    KERNEL_SRC_DIR="./kernel_workspace/common"
+    PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
+    PATCH_ZIP_NAME="bianyi.zip"
+    PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
 
-          # 日志函数（与原脚本风格统一）
-          log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
-          log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
-          log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
+    # 日志函数（与原脚本风格统一）
+    log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
+    log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
+    log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
 
-          # 检查内核目录
-          if [ ! -d "$KERNEL_SRC_DIR" ]; then
-            log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
-          fi
-          cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
+    # 关键映射：目标文件路径（内核中要替换的文件）<-> 压缩包内文件名（去掉.patch前）
+    declare -A FILE_MAPPING=(
+      ["build.config.gki"]="build.config.gki.patch"
+      ["fs/overlayfs/params.c"]="params.c.patch"
+      ["fs/overlayfs/super.c"]="super.c.patch"
+      ["fs/overlayfs/util.c"]="util.c.patch"
+      ["include/linux/netdevice.h"]="netdevice.h.patch"
+      ["include/linux/sched.h"]="sched.h.patch"
+      ["kernel/cgroup/cgroup.c"]="cgroup.c.patch"
+      ["module/main.c"]="main.c.patch"
+      ["module/version.c"]="version.c.patch"
+      ["module/pid.c"]="pid.c.patch"
+    )
 
-          log_info "开始处理bianyi.zip补丁压缩包"
+    # 检查内核目录
+    if [ ! -d "$KERNEL_SRC_DIR" ]; then
+      log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
+    fi
+    cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
 
-          # 下载压缩包（使用aria2c，与原脚本下载工具统一）
-          aria2c -s16 -x16 -k1M "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME" || log_error "bianyi.zip压缩包下载失败，请检查URL有效性"
-          if [ ! -f "../$PATCH_ZIP_NAME" ]; then
-            log_error "bianyi.zip压缩包下载失败，请检查URL有效性"
-          fi
+    log_info "开始处理bianyi.zip文件（直接替换内核目标文件）"
 
-          # 解压压缩包并输出结构（方便排查路径）
-          mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
-          unzip -q -o "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR"
-          if [ $? -ne 0 ]; then
-            log_error "bianyi.zip压缩包解压失败，可能是文件损坏"
-          fi
-          log_info "压缩包解压完成，实际文件结构如下："
-          find "../$PATCH_UNZIP_DIR" -type f | grep -E "\.patch$" || log_warn "未找到任何.patch文件，请检查压缩包内容"
+    # 下载压缩包（3次重试，避免网络问题）
+    aria2c -s16 -x16 -k1M -m3 "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME" || log_error "bianyi.zip下载失败（3次重试均失败），请检查URL"
+    if [ ! -f "../$PATCH_ZIP_NAME" ]; then
+      log_error "未找到下载的压缩包：../$PATCH_ZIP_NAME"
+    fi
 
-          # 10个目标补丁（简化路径匹配，适配可能的目录结构）
-          declare -a TARGET_PATCHES=(
-            "build.config.gki.patch"
-            "params.c.patch"
-            "super.c.patch"
-            "util.c.patch"
-            "netdevice.h.patch"
-            "sched.h.patch"
-            "cgroup.c.patch"
-            "main.c.patch"
-            "version.c.patch"
-            "pid.c.patch"
-          )
+    # 解压压缩包（强制解压，忽略损坏）
+    mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
+    log_info "正在解压压缩包（忽略损坏文件）..."
+    unzip -q -o -DD "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR" || log_error "压缩包解压失败，可能严重损坏"
 
-          # 逐个查找并应用补丁（容错路径）
-          log_info "开始批量应用10个增量补丁（自动匹配路径）"
-          for target_patch in "${TARGET_PATCHES[@]}"; do
-            # 递归查找补丁文件（忽略目录层级）
-            patch_path=$(find "../$PATCH_UNZIP_DIR" -name "$target_patch" -type f | head -n1)
-            if [ -z "$patch_path" ]; then
-              log_warn "未找到补丁：$target_patch，跳过应用"
-              continue
-            fi
+    # 输出解压后的所有文件（方便排查）
+    log_info "压缩包解压完成，所有文件如下："
+    find "../$PATCH_UNZIP_DIR" -type f | tee ./unzip_file_list.txt || log_warn "压缩包内无任何文件"
 
-            # 应用找到的补丁
-            log_info "正在应用补丁（实际路径）：$patch_path"
-            patch -p1 < "$patch_path"
-            if [ $? -eq 0 ]; then
-              log_info "补丁应用成功：$target_patch"
-            else
-              log_warn "补丁应用警告：$target_patch（可能是版本偏移或已应用，可忽略）"
-            fi
-          done
+    # 逐个查找并替换目标文件（去掉.patch后缀）
+    log_info "开始直接替换内核对应文件（去掉.patch后缀）"
+    for target_path in "${!FILE_MAPPING[@]}"; do
+      # 压缩包内的源文件名（带.patch）
+      patch_filename="${FILE_MAPPING[$target_path]}"
+      # 递归查找压缩包内的源文件
+      source_file=$(find "../$PATCH_UNZIP_DIR" -name "$patch_filename" -type f | head -n1)
 
-          # 清理临时文件（保持源码目录整洁）
-          rm -f "../$PATCH_ZIP_NAME"
-          rm -rf "../$PATCH_UNZIP_DIR"
-          log_info "bianyi.zip补丁应用流程完成，临时文件已清理"
-          
+      if [ -z "$source_file" ]; then
+        log_warn "未找到源文件：$patch_filename，跳过替换目标文件：$target_path"
+        continue
+      fi
+
+      # 目标文件完整路径
+      target_full_path="$KERNEL_SRC_DIR/$target_path"
+      # 确保目标文件所在目录存在
+      target_dir=$(dirname "$target_full_path")
+      if [ ! -d "$target_dir" ]; then
+        log_warn "目标文件目录不存在：$target_dir，跳过替换"
+        continue
+      fi
+
+      # 直接替换文件（覆盖原有文件）
+      log_info "正在替换：$target_full_path <- $source_file"
+      cp -f "$source_file" "$target_full_path"
+
+      # 校验替换结果
+      if [ $? -eq 0 ]; then
+        log_info "替换成功：$target_path"
+      else
+        log_warn "替换失败：$target_path（可能权限不足，忽略）"
+      fi
+    done
+
+    # 清理临时文件
+    rm -f "../$PATCH_ZIP_NAME" ./unzip_file_list.txt
+    rm -rf "../$PATCH_UNZIP_DIR"
+    log_info "文件替换完成，临时文件已清理"
+    
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |

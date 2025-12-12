@@ -1,0 +1,254 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * INET		An implementation of the TCP/IP protocol suite for the LINUX
+ *		operating system.  INET is implemented using the  BSD Socket
+ *		interface as the means of communication with the user level.
+ *
+ *		Definitions for the Interfaces handler.
+ *
+ * Version:	@(#)dev.h	1.0.10	08/12/93
+ *
+ * Authors:	Ross Biro
+ *		Fred N. van Kempen, <waltje@uWalt.NL.Mugnet.ORG>
+ *		Corey Minyard <wf-rch!minyard@relay.EU.net>
+ *		Donald J. Becker, <becker@cesdis.gsfc.nasa.gov>
+ *		Alan Cox, <alan@lxorguk.ukuu.org.uk>
+ *		Bjorn Ekwall. <bj0rn@blox.se>
+ *              Pekka Riikonen <priikone@poseidon.pspt.fi>
+ *
+ *		Moved to /usr/include/linux for NET3
+ */
+#ifndef _LINUX_NETDEVICE_H
+#define _LINUX_NETDEVICE_H
+
+#include <linux/timer.h>
+#include <linux/bug.h>
+#include <linux/delay.h>
+#include <linux/atomic.h>
+#include <linux/prefetch.h>
+#include <asm/cache.h>
+#include <asm/byteorder.h>
+#include <asm/local.h>
+
+#include <linux/percpu.h>
+#include <linux/rculist.h>
+#include <linux/workqueue.h>
+#include <linux/dynamic_queue_limits.h>
+
+#include <net/net_namespace.h>
+#ifdef CONFIG_DCB
+#include <net/dcbnl.h>
+#endif
+#include <net/netprio_cgroup.h>
+
+#include <linux/netdev_features.h>
+#include <linux/neighbour.h>
+#include <uapi/linux/netdevice.h>
+#include <uapi/linux/if_bonding.h>
+#include <uapi/linux/pkt_cls.h>
+#include <uapi/linux/netdev.h>
+#include <linux/hashtable.h>
+#include <linux/rbtree.h>
+#include <net/net_trackers.h>
+#include <net/net_debug.h>
+#include <net/dropreason-core.h>
+#include <linux/android_kabi.h>
+
+struct netpoll_info;
+struct device;
+struct ethtool_ops;
+struct kernel_hwtstamp_config;
+struct phy_device;
+struct dsa_port;
+struct ip_tunnel_parm;
+struct macsec_context;
+struct macsec_ops;
+struct netdev_name_node;
+struct sd_flow_limit;
+struct sfp_bus;
+/* 802.11 specific */
+struct wireless_dev;
+/* 802.15.4 specific */
+struct wpan_dev;
+struct mpls_dev;
+/* UDP Tunnel offloads */
+struct udp_tunnel_info;
+struct udp_tunnel_nic_info;
+struct udp_tunnel_nic;
+struct bpf_prog;
+struct xdp_buff;
+struct xdp_frame;
+struct xdp_metadata_ops;
+struct xdp_md;
+
+typedef u32 xdp_features_t;
+
+void synchronize_net(void);
+void netdev_set_default_ethtool_ops(struct net_device *dev,
+				    const struct ethtool_ops *ops);
+void netdev_sw_irq_coalesce_default_on(struct net_device *dev);
+
+/* Backlog congestion levels */
+#define NET_RX_SUCCESS		0	/* keep 'em coming, baby */
+#define NET_RX_DROP		1	/* packet dropped */
+
+#define MAX_NEST_DEV 8
+
+/*
+ * Transmit return codes: transmit return codes originate from three different
+ * namespaces:
+ *
+ * - qdisc return codes
+ * - driver transmit return codes
+ * - errno values
+ *
+ * Drivers are allowed to return any one of those in their hard_start_xmit()
+ * function. Real network devices commonly used with qdiscs should only return
+ * the driver transmit return codes though - when qdiscs are used, the actual
+ * transmission happens asynchronously, so the value is not propagated to
+ * higher layers. Virtual network devices transmit synchronously; in this case
+ * the driver transmit return codes are consumed by dev_queue_xmit(), and all
+ * others are propagated to higher layers.
+ */
+
+/* qdisc ->enqueue() return codes. */
+#define NET_XMIT_SUCCESS	0x00
+#define NET_XMIT_DROP		0x01	/* skb dropped			*/
+#define NET_XMIT_CN		0x02	/* congestion notification	*/
+#define NET_XMIT_MASK		0x0f	/* qdisc flags in net/sch_generic.h */
+
+/* NET_XMIT_CN is special. It does not guarantee that this packet is lost. It
+ * indicates that the device will soon be dropping packets, or already drops
+ * some packets of the same priority; prompting us to send less aggressively. */
+#define net_xmit_eval(e)	((e) == NET_XMIT_CN ? 0 : (e))
+#define net_xmit_errno(e)	((e) != NET_XMIT_CN ? -ENOBUFS : 0)
+
+/* Driver transmit return codes */
+#define NETDEV_TX_MASK		0xf0
+
+enum netdev_tx {
+	__NETDEV_TX_MIN	 = INT_MIN,	/* make sure enum is signed */
+	NETDEV_TX_OK	 = 0x00,	/* driver took care of packet */
+	NETDEV_TX_BUSY	 = 0x10,	/* driver tx path was busy*/
+};
+typedef enum netdev_tx netdev_tx_t;
+
+/*
+ * Current order: NETDEV_TX_MASK > NET_XMIT_MASK >= 0 is significant;
+ * hard_start_xmit() return < NET_XMIT_MASK means skb was consumed.
+ */
+static inline bool dev_xmit_complete(int rc)
+{
+	/*
+	 * Positive cases with an skb consumed by a driver:
+	 * - successful transmission (rc == NETDEV_TX_OK)
+	 * - error while transmitting (rc < 0)
+	 * - error while queueing to a different device (rc & NET_XMIT_MASK)
+	 */
+	if (likely(rc < NET_XMIT_MASK))
+		return true;
+
+	return false;
+}
+
+/*
+ *	Compute the worst-case header length according to the protocols
+ *	used.
+ */
+
+#if defined(CONFIG_HYPERV_NET)
+# define LL_MAX_HEADER 128
+#elif defined(CONFIG_WLAN) || IS_ENABLED(CONFIG_AX25)
+# if defined(CONFIG_MAC80211_MESH)
+#  define LL_MAX_HEADER 128
+# else
+#  define LL_MAX_HEADER 96
+# endif
+#else
+# define LL_MAX_HEADER 32
+#endif
+
+#if !IS_ENABLED(CONFIG_NET_IPIP) && !IS_ENABLED(CONFIG_NET_IPGRE) && \
+    !IS_ENABLED(CONFIG_IPV6_SIT) && !IS_ENABLED(CONFIG_IPV6_TUNNEL)
+#define MAX_HEADER LL_MAX_HEADER
+#else
+#define MAX_HEADER (LL_MAX_HEADER + 48)
+#endif
+
+/*
+ *	Old network device statistics. Fields are native words
+ *	(unsigned long) so they can be read and written atomically.
+ */
+
+#define NET_DEV_STAT(FIELD)			\
+	union {					\
+		unsigned long FIELD;		\
+		atomic_long_t __##FIELD;	\
+	}
+
+struct net_device_stats {
+	NET_DEV_STAT(rx_packets);
+	NET_DEV_STAT(tx_packets);
+	NET_DEV_STAT(rx_bytes);
+	NET_DEV_STAT(tx_bytes);
+	NET_DEV_STAT(rx_errors);
+	NET_DEV_STAT(tx_errors);
+	NET_DEV_STAT(rx_dropped);
+	NET_DEV_STAT(tx_dropped);
+	NET_DEV_STAT(multicast);
+	NET_DEV_STAT(collisions);
+	NET_DEV_STAT(rx_length_errors);
+	NET_DEV_STAT(rx_over_errors);
+	NET_DEV_STAT(rx_crc_errors);
+	NET_DEV_STAT(rx_frame_errors);
+	NET_DEV_STAT(rx_fifo_errors);
+	NET_DEV_STAT(rx_missed_errors);
+	NET_DEV_STAT(tx_aborted_errors);
+	NET_DEV_STAT(tx_carrier_errors);
+	NET_DEV_STAT(tx_fifo_errors);
+	NET_DEV_STAT(tx_heartbeat_errors);
+	NET_DEV_STAT(tx_window_errors);
+	NET_DEV_STAT(rx_compressed);
+	NET_DEV_STAT(tx_compressed);
+};
+#undef NET_DEV_STAT
+
+/* per-cpu stats, allocated on demand.
+ * Try to fit them in a single cache line, for dev_get_stats() sake.
+ */
+struct net_device_core_stats {
+	unsigned long	rx_dropped;
+	unsigned long	tx_dropped;
+	unsigned long	rx_nohandler;
+	unsigned long	rx_otherhost_dropped;
+} __aligned(4 * sizeof(unsigned long));
+
+#include <linux/cache.h>
+#include <linux/skbuff.h>
+
+#ifdef CONFIG_RPS
+#include <linux/static_key.h>
+extern struct static_key_false rps_needed;
+extern struct static_key_false rfs_needed;
+#endif
+
+struct neighbour;
+struct neigh_parms;
+struct sk_buff;
+
+struct netdev_hw_addr {
+	struct list_head	list;
+	struct rb_node		node;
+	unsigned char		addr[MAX_ADDR_LEN];
+	unsigned char		type;
+#define NETDEV_HW_ADDR_T_LAN		1
+#define NETDEV_HW_ADDR_T_SAN		2
+#define NETDEV_HW_ADDR_T_UNICAST	3
+#define NETDEV_HW_ADDR_T_MULTICAST	4
+	bool			global_use;
+	int			sync_cnt;
+	int			refcount;
+	int			synced;
+	struct rcu_head		rcu_head;
+};
+

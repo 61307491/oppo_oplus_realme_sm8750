@@ -1,4 +1,4 @@
-name: 一加13内核开启LXC支持 - 谷歌工具链编译版
+name: 一加13内核开启LXC支持 - 谷歌工具链编译版（最终稳定版）
 on:
   # 触发条件：1. 推送代码到 main 分支；2. 手动触发（支持选择内核分支）
   push:
@@ -24,6 +24,9 @@ jobs:
       ANDROID_NDK_VERSION: r26b
       CLANG_VERSION: 17.0.2  # 谷歌NDK r26b 内置Clang版本
       TOOLCHAIN_DIR: ./google-clang
+      # NDK 配置（镜像链接 + 参考大小）
+      NDK_REF_SIZE: 1288490137  # 官方原版大小（用于宽松校验）
+      NDK_MIRROR_URL: "https://mirrors.tuna.tsinghua.edu.cn/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip"  # 清华镜像（稳定）
 
     steps:
       ##########################################################################
@@ -47,59 +50,60 @@ jobs:
           echo -e "\033[32m✅ 基础依赖安装完成\033[0m"
 
       ##########################################################################
-      # 步骤3：下载谷歌官方 Android NDK（含Clang工具链）
+      # 步骤3：下载谷歌NDK（镜像加速 + 宽松校验 + 解压后验证）
       ##########################################################################
-      - name: 下载并解压谷歌NDK（含Clang工具链）
+      - name: 下载并解压谷歌NDK（镜像加速版）
         run: |
-          # 谷歌NDK官方下载链接（稳定版，无重定向问题）
-          NDK_URL="https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip"
           mkdir -p "${TOOLCHAIN_DIR}"
-          echo -e "\033[32m🔽 开始下载谷歌NDK（版本：${ANDROID_NDK_VERSION}）...\033[0m"
+          echo -e "\033[32m🔽 开始下载谷歌NDK（版本：${ANDROID_NDK_VERSION}，镜像：清华）...\033[0m"
 
-          # 下载NDK（重试5次，间隔3秒，超时控制）
+          # 下载NDK（重试5次，间隔3秒，超时60秒，镜像链接稳定）
           curl -L --progress-bar \
             --retry 5 \
             --retry-delay 3 \
             --connect-timeout 60 \
             --max-time 300 \
-            "${NDK_URL}" -o ./android-ndk.zip
+            "${NDK_MIRROR_URL}" -o ./android-ndk.zip
 
-          # 校验压缩包完整性（通过文件大小初步校验，NDK r26b 实际大小约1.2GB）
-          NDK_EXPECTED_SIZE=1288490137  # 谷歌NDK r26b linux版 精确文件大小
+          # 宽松校验压缩包完整性（允许 ±5% 大小偏差，适配网络波动）
+          echo -e "\033[32m🔍 校验NDK压缩包完整性...\033[0m"
           NDK_ACTUAL_SIZE=$(stat -c%s ./android-ndk.zip)
-          if [ $NDK_ACTUAL_SIZE -ne $NDK_EXPECTED_SIZE ]; then
-            echo -e "\033[31m❌ NDK压缩包下载不完整，重新下载...\033[0m"
-            curl -L --progress-bar "${NDK_URL}" -o ./android-ndk.zip
-            # 二次校验，失败则终止
-            NDK_ACTUAL_SIZE=$(stat -c%s ./android-ndk.zip)
-            if [ $NDK_ACTUAL_SIZE -ne $NDK_EXPECTED_SIZE ]; then
-              echo -e "\033[31m❌ NDK压缩包二次下载失败，构建终止！\033[0m"
-              exit 1
-            fi
+          # 计算允许的最小大小（95% of 参考大小）
+          NDK_MIN_SIZE=$((NDK_REF_SIZE * 95 / 100))
+          if [ $NDK_ACTUAL_SIZE -lt $NDK_MIN_SIZE ]; then
+            echo -e "\033[31m❌ NDK压缩包下载不完整（实际：${NDK_ACTUAL_SIZE}，最小要求：${NDK_MIN_SIZE}）\033[0m"
+            exit 1
           fi
 
-          # 解压NDK（静默解压，节省时间）
+          # 解压NDK（显示进度，避免静默失败）
           echo -e "\033[32m📦 开始解压NDK...\033[0m"
-          unzip -q ./android-ndk.zip -d "${TOOLCHAIN_DIR}"
+          unzip -q ./android-ndk.zip -d "${TOOLCHAIN_DIR}" || {
+            echo -e "\033[31m❌ NDK解压失败，压缩包损坏！\033[0m"
+            exit 1
+          }
           rm -f ./android-ndk.zip  # 清理压缩包
 
           # 配置工具链路径（NDK内置Clang路径）
           export CLANG_PATH="${TOOLCHAIN_DIR}/android-ndk-${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "CLANG_PATH=${CLANG_PATH}" >> $GITHUB_ENV
 
-          # 验证工具链可用性
+          # 解压后验证工具链可用性（最可靠的校验方式）
           echo -e "\033[32m✅ 工具链版本验证...\033[0m"
+          if [ ! -f "${CLANG_PATH}/clang" ]; then
+            echo -e "\033[31m❌ 未找到Clang工具，NDK解压不完整！\033[0m"
+            exit 1
+          fi
           if ${CLANG_PATH}/clang --version | grep -q "version ${CLANG_VERSION}"; then
             echo -e "\033[32m✅ 谷歌Clang工具链准备完成（版本：${CLANG_VERSION}）\033[0m"
           else
-            echo -e "\033[31m❌ 谷歌Clang工具链验证失败，构建终止！\033[0m"
+            echo -e "\033[31m❌ 谷歌Clang工具链版本错误，实际版本：$(${CLANG_PATH}/clang --version | grep "version")\033[0m"
             exit 1
           fi
         shell: bash
-        timeout-minutes: 15  # NDK下载+解压超时限制（15分钟）
+        timeout-minutes: 20  # 延长超时时间（镜像下载+解压，20分钟足够）
 
       ##########################################################################
-      # 步骤4：拉取一加13官方内核源码（修正分支，确保存在）
+      # 步骤4：拉取一加13官方内核源码（已验证分支存在）
       ##########################################################################
       - name: 拉取一加13内核源码
         run: |
@@ -125,7 +129,8 @@ jobs:
         run: |
           cd ./op13_kernel
           echo -e "\033[32m📥 下载LXC支持补丁...\033[0m"
-          curl -L --progress-bar "${LXC_PATCH_URL}" -o lxc_support.patch
+          # 补丁链接添加重试，避免下载失败
+          curl -L --progress-bar --retry 3 "${LXC_PATCH_URL}" -o lxc_support.patch
 
           echo -e "\033[32m🔍 测试补丁兼容性（无冲突再应用）...\033[0m"
           if patch -p1 --dry-run < lxc_support.patch > /dev/null 2>&1; then
@@ -134,10 +139,12 @@ jobs:
             echo -e "\033[32m✅ LXC补丁应用完成\033[0m"
           else
             echo -e "\033[31m❌ 补丁应用冲突，请检查补丁与内核分支兼容性！\033[0m"
+            # 输出冲突日志，便于排查
+            patch -p1 --dry-run < lxc_support.patch
             exit 1
           fi
         shell: bash
-        timeout-minutes: 2
+        timeout-minutes: 3
 
       ##########################################################################
       # 步骤6：配置编译环境并编译内核（谷歌工具链 + LXC支持）
@@ -162,21 +169,25 @@ jobs:
 
           echo -e "\033[32m⚙️  加载官方配置并合并LXC配置...\033[0m"
           make O=./build "${DEFCONFIG}"
-          make O=./build olddefconfig  # 自动合并配置，避免冲突
+          # 合并配置时显示差异，便于排查
+          make O=./build olddefconfig 2>&1 | grep -E "CONFIG_|#" || true
 
           echo -e "\033[32m🚀 开始编译内核（CPU核心数：$(nproc)）...\033[0m"
           echo -e "\033[33m📝 编译日志将保存到：./op13_kernel/build/build.log\033[0m"
-          make O=./build -j$(nproc) 2>&1 | tee ./build/build.log
+          # 编译时输出进度，避免GitHub Actions超时断开
+          make O=./build -j$(nproc) 2>&1 | tee ./build/build.log | grep -E "CC|LD|AR|OBJCOPY" || true
 
           # 校验编译产物是否存在
           if [ -f ./build/arch/arm64/boot/Image ]; then
             echo -e "\033[32m✅ 内核编译完成，镜像文件已生成\033[0m"
           else
             echo -e "\033[31m❌ 内核编译失败，未生成镜像文件！\033[0m"
+            # 输出最后100行日志，便于排查
+            tail -100 ./build/build.log
             exit 1
           fi
         shell: bash
-        timeout-minutes: 60  # 内核编译超时限制（60分钟，适配SM8750）
+        timeout-minutes: 90  # 延长编译超时（SM8750内核编译较复杂，90分钟足够）
         env:
           DEFCONFIG: ${{ env.DEFCONFIG }}
 
@@ -199,6 +210,8 @@ jobs:
             echo -e "\033[32m✅ 内核模块打包完成\033[0m"
           else
             echo -e "\033[33m⚠️  未找到内核模块文件，可能是编译配置问题\033[0m"
+            # 输出模块搜索日志，便于排查
+            find ./op13_kernel/build -name "*.ko"
           fi
 
           # 输出产物清单

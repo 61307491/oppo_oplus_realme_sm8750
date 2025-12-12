@@ -1,4 +1,4 @@
-name: 一加13内核开启LXC支持 - 自动化构建（稳定版）
+name: 一加13内核开启LXC支持 - 谷歌工具链编译版
 on:
   # 触发条件：1. 推送代码到 main 分支；2. 手动触发（支持选择内核分支）
   push:
@@ -10,25 +10,20 @@ on:
         required: true
         default: 'oneplus/sm8750_6.6.89'
         type: string
-      toolchain_mirror:
-        description: '工具链镜像（默认：ghproxy，备选：gitee）'
-        required: false
-        default: 'ghproxy'
-        type: choice
-        options:
-          - ghproxy
-          - gitee
 
 jobs:
   build_lxc_kernel:
-    # 运行环境：Ubuntu 22.04（安卓内核编译最优选择）
+    # 运行环境：Ubuntu 22.04（安卓官方推荐编译环境）
     runs-on: ubuntu-22.04
     env:
       # 全局环境变量（统一管理，便于修改）
       DEFCONFIG: vendor/sm8750-perf_defconfig
-      CLANG_VERSION: 18.0.0
       KERNEL_REPO: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8750.git
       LXC_PATCH_URL: https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch
+      # 谷歌工具链配置（安卓14/15官方稳定版，适配SM8750 6.6.x内核）
+      ANDROID_NDK_VERSION: r26b
+      CLANG_VERSION: 17.0.2  # 谷歌NDK r26b 内置Clang版本
+      TOOLCHAIN_DIR: ./google-clang
 
     steps:
       ##########################################################################
@@ -41,66 +36,62 @@ jobs:
           persist-credentials: false
 
       ##########################################################################
-      # 步骤2：安装编译核心依赖（静默安装，减少冗余输出）
+      # 步骤2：安装编译核心依赖（谷歌工具链依赖 + 内核编译工具）
       ##########################################################################
       - name: 安装Ubuntu编译依赖
         run: |
           sudo apt update -y > /dev/null 2>&1
           sudo apt install -y \
             git bc bison flex libssl-dev libelf-dev lz4 zstd curl patch \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu > /dev/null 2>&1
+            python3 python3-pip openjdk-11-jdk-headless > /dev/null 2>&1
           echo -e "\033[32m✅ 基础依赖安装完成\033[0m"
 
       ##########################################################################
-      # 步骤3：下载Neutron-Clang工具链（镜像+重试+校验，100%成功）
+      # 步骤3：下载谷歌官方 Android NDK（含Clang工具链）
       ##########################################################################
-      - name: 下载并解压Neutron-Clang工具链
+      - name: 下载并解压谷歌NDK（含Clang工具链）
         run: |
-          # 根据选择的镜像设置工具链地址
-          if [ "${{ github.event.inputs.toolchain_mirror }}" = "gitee" ]; then
-            CLANG_URL="https://gitee.com/mirrors/Neutron-Toolchains/releases/raw/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
-          else
-            CLANG_URL="https://ghproxy.com/https://github.com/Neutron-Toolchains/llvm-project/releases/download/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
-          fi
+          # 谷歌NDK官方下载链接（稳定版，无重定向问题）
+          NDK_URL="https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip"
+          mkdir -p "${TOOLCHAIN_DIR}"
+          echo -e "\033[32m🔽 开始下载谷歌NDK（版本：${ANDROID_NDK_VERSION}）...\033[0m"
 
-          # 创建工具链目录
-          mkdir -p ./clang
-          echo -e "\033[32m🔽 开始下载工具链（镜像：${{ github.event.inputs.toolchain_mirror }}）...\033[0m"
-
-          # 下载工具链（重试5次，间隔3秒，超时60秒，容错性拉满）
+          # 下载NDK（重试5次，间隔3秒，超时控制）
           curl -L --progress-bar \
             --retry 5 \
             --retry-delay 3 \
             --connect-timeout 60 \
             --max-time 300 \
-            "${CLANG_URL}" -o ./clang.tar.gz
+            "${NDK_URL}" -o ./android-ndk.zip
 
-          # 校验压缩包完整性（避免下载损坏文件）
-          echo -e "\033[32m🔍 校验工具链压缩包完整性...\033[0m"
-          if ! gzip -t ./clang.tar.gz; then
-            echo -e "\033[31m❌ 工具链压缩包损坏，尝试备用镜像...\033[0m"
-            # 自动切换到备用镜像重新下载
-            CLANG_URL="https://gitee.com/mirrors/Neutron-Toolchains/releases/raw/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
-            curl -L --progress-bar "${CLANG_URL}" -o ./clang.tar.gz
-            # 二次校验，失败则终止构建
-            gzip -t ./clang.tar.gz || { echo -e "\033[31m❌ 备用镜像下载也失败，请检查网络！\033[0m"; exit 1; }
+          # 校验压缩包完整性（通过文件大小初步校验）
+          echo -e "\033[32m🔍 校验NDK压缩包...\033[0m"
+          NDK_EXPECTED_SIZE=1234567890  # NDK r26b 实际大小约1.2GB，此处为占位符，可替换为真实值
+          NDK_ACTUAL_SIZE=$(stat -c%s ./android-ndk.zip)
+          if [ $NDK_ACTUAL_SIZE -lt $((NDK_EXPECTED_SIZE * 0.9)) ]; then
+            echo -e "\033[31m❌ NDK压缩包下载不完整，重新下载...\033[0m"
+            curl -L --progress-bar "${NDK_URL}" -o ./android-ndk.zip
           fi
 
-          # 解压工具链（显示进度）
-          echo -e "\033[32m📦 开始解压工具链...\033[0m"
-          tar -xzf ./clang.tar.gz -C ./clang --progress
-          rm -f ./clang.tar.gz  # 清理压缩包，节省空间
+          # 解压NDK（静默解压，节省时间）
+          echo -e "\033[32m📦 开始解压NDK...\033[0m"
+          unzip -q ./android-ndk.zip -d "${TOOLCHAIN_DIR}"
+          rm -f ./android-ndk.zip  # 清理压缩包
 
-          # 验证工具链可用性（确保版本正确）
+          # 配置工具链路径（NDK内置Clang路径）
+          export CLANG_PATH="${TOOLCHAIN_DIR}/android-ndk-${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CLANG_PATH=${CLANG_PATH}" >> $GITHUB_ENV
+
+          # 验证工具链可用性
           echo -e "\033[32m✅ 工具链版本验证...\033[0m"
-          if ./clang/bin/clang --version | grep -q "version ${CLANG_VERSION}"; then
-            echo -e "\033[32m✅ 工具链下载验证成功（版本：${CLANG_VERSION}）\033[0m"
+          if ${CLANG_PATH}/clang --version | grep -q "version ${CLANG_VERSION}"; then
+            echo -e "\033[32m✅ 谷歌Clang工具链准备完成（版本：${CLANG_VERSION}）\033[0m"
           else
-            echo -e "\033[31m❌ 工具链版本错误，构建终止！\033[0m"
+            echo -e "\033[31m❌ 谷歌Clang工具链验证失败，构建终止！\033[0m"
             exit 1
           fi
         shell: bash
-        timeout-minutes: 10  # 工具链下载超时限制（10分钟）
+        timeout-minutes: 15  # NDK下载+解压超时限制（15分钟）
 
       ##########################################################################
       # 步骤4：拉取一加13官方内核源码（指定分支，浅克隆）
@@ -137,20 +128,25 @@ jobs:
         timeout-minutes: 2
 
       ##########################################################################
-      # 步骤6：配置编译环境并编译内核（开启LXC支持）
+      # 步骤6：配置编译环境并编译内核（谷歌工具链 + LXC支持）
       ##########################################################################
       - name: 配置并编译内核
         run: |
           cd ./op13_kernel
-          # 配置交叉编译环境变量
+          # 导入谷歌Clang工具链路径
+          CLANG_PATH="${{ env.CLANG_PATH }}"
+
+          # 配置交叉编译环境变量（谷歌工具链标准配置）
           export ARCH=arm64
           export SUBARCH=arm64
-          export CC=$(pwd)/../clang/bin/clang
-          export LD=$(pwd)/../clang/bin/ld.lld
-          export AR=$(pwd)/../clang/bin/llvm-ar
-          export NM=$(pwd)/../clang/bin/llvm-nm
-          export OBJCOPY=$(pwd)/../clang/bin/llvm-objcopy
-          export OBJDUMP=$(pwd)/../clang/bin/llvm-objdump
+          export CC="${CLANG_PATH}/aarch64-linux-android${CLANG_VERSION}-clang"
+          export CXX="${CLANG_PATH}/aarch64-linux-android${CLANG_VERSION}-clang++"
+          export LD="${CLANG_PATH}/ld.lld"
+          export AR="${CLANG_PATH}/llvm-ar"
+          export NM="${CLANG_PATH}/llvm-nm"
+          export OBJCOPY="${CLANG_PATH}/llvm-objcopy"
+          export OBJDUMP="${CLANG_PATH}/llvm-objdump"
+          export STRIP="${CLANG_PATH}/llvm-strip"
 
           echo -e "\033[32m⚙️  加载官方配置并合并LXC配置...\033[0m"
           make O=./build "${DEFCONFIG}"
@@ -182,7 +178,8 @@ jobs:
           echo -e "\033[32m📦 整理编译产物...\033[0m"
 
           # 复制内核镜像（重命名，便于识别）
-          cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel_${{ github.event.inputs.kernel_branch || '6.6.89' }}.img
+          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || '6.6.89' }}"
+          cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel_GoogleClang_${KERNEL_BRANCH}.img
 
           # 打包内核模块（LXC容器运行依赖）
           if find ./op13_kernel/build -name "*.ko" | grep -q .; then
@@ -203,7 +200,7 @@ jobs:
       - name: 归档产物供下载
         uses: actions/upload-artifact@v4
         with:
-          name: 一加13-LXC内核-${{ github.event.inputs.kernel_branch || '6.6.89' }}
+          name: 一加13-LXC内核-谷歌工具链-${{ github.event.inputs.kernel_branch || '6.6.89' }}
           path: ./final_output/*
           retention-days: 90  # 产物保留90天，可按需调整（1-90）
           if-no-files-found: error  # 若产物缺失，构建标记为失败

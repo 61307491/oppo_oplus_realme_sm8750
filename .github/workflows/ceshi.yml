@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.66 22222欧加真OKI内核
+name: 加速版构建 6.6.66 222欧加真OKI内核
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -129,49 +129,48 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-      # ===================== 新增：应用10个增量补丁（bianyi.zip）=====================
-- name: 下载并解压10个增量补丁（bianyi.zip）
-  run: |
-    cd kernel_workspace
-    # 安装aria2c（高并发下载工具，适配阿里云盘分享直链）
-    sudo apt-get install -y aria2
-    
-    # 直接通过分享链接下载（无需CLI，利用aria2c突破下载限制）
-    echo "正在下载10个增量补丁包..."
-    aria2c -s 16 -x 16 -k 1M "https://www.alipan.com/t/v5vmHvpEH1UAUmH4GfdR" -o bianyi.zip --allow-overwrite=true
-    
-    # 验证下载是否成功
-    if [ ! -f "bianyi.zip" ]; then
-      echo "❌ 补丁包下载失败，请检查分享链接是否有效"
-      exit 1
-    fi
-    
-    # 解压补丁到内核源码目录（覆盖对应文件，保持路径一致）
-    echo "正在解压并应用补丁..."
-    unzip -o bianyi.zip -d common/
-    
-    # 校验10个关键补丁文件完整性
-    CHECK_FILES=(
-        "common/build.config.gki"
-        "common/fs/overlayfs/params.c"
-        "common/fs/overlayfs/super.c"
-        "common/fs/overlayfs/util.c"
-        "common/include/linux/netdevice.h"
-        "common/include/linux/sched.h"
-        "common/kernel/cgroup/cgroup.c"
-        "common/kernel/module/main.c"
-        "common/kernel/module/version.c"
-        "common/kernel/cgroup/pid.c"
-    )
-    for file in "${CHECK_FILES[@]}"; do
-        if [ ! -f "$file" ]; then
-            echo "❌ 关键补丁文件缺失：$file"
+      # ===================== 修复后：应用10个增量补丁（bianyi.zip）=====================
+      - name: 下载并解压10个增量补丁（bianyi.zip）
+        run: |
+          cd kernel_workspace
+          # 安装aria2c（高并发下载工具，适配阿里云盘分享链接）
+          sudo apt-get install -y aria2
+          
+          # 直接通过分享链接下载（免CLI，突破下载限制）
+          echo "正在下载10个增量补丁包..."
+          aria2c -s 16 -x 16 -k 1M "https://www.alipan.com/t/v5vmHvpEH1UAUmH4GfdR" -o bianyi.zip --allow-overwrite=true --no-check-certificate
+          
+          # 验证下载是否成功
+          if [ ! -f "bianyi.zip" ]; then
+            echo "❌ 补丁包下载失败，请检查分享链接是否有效"
             exit 1
-        fi
-    done
-    echo "✅ 10个增量补丁已成功应用到内核源码"
-# ===================== 新增步骤结束 =====================
-
+          fi
+          
+          # 解压补丁到内核源码目录（覆盖对应文件，保持路径一致）
+          echo "正在解压并应用补丁..."
+          unzip -o bianyi.zip -d common/
+          
+          # 校验10个关键补丁文件完整性
+          CHECK_FILES=(
+              "common/build.config.gki"
+              "common/fs/overlayfs/params.c"
+              "common/fs/overlayfs/super.c"
+              "common/fs/overlayfs/util.c"
+              "common/include/linux/netdevice.h"
+              "common/include/linux/sched.h"
+              "common/kernel/cgroup/cgroup.c"
+              "common/kernel/module/main.c"
+              "common/kernel/module/version.c"
+              "common/kernel/cgroup/pid.c"
+          )
+          for file in "${CHECK_FILES[@]}"; do
+              if [ ! -f "$file" ]; then
+                  echo "❌ 关键补丁文件缺失：$file"
+                  exit 1
+              fi
+          done
+          echo "✅ 10个增量补丁已成功应用到内核源码"
+      # ===================== 新增步骤结束 =====================
 
       - name: 配置ccache目录
         run: |
@@ -362,7 +361,7 @@ jobs:
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
-            patch -p1 < 10_enable_susfs_for_ksu.patch || true
+            patch -p1 < 10_enable_s_susfs_for_ksu.patch || true
             #为MKSU修正susfs 2.0.0补丁
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
             patch -p1 < mksu_supercalls.patch || true
@@ -527,7 +526,7 @@ jobs:
             # 具有高吞吐、低延迟、抗丢包的特点，但在手机上使用时由于持续探测带宽/RTT、高频计算与发包增加 CPU 和射频模块功耗，会增加耗电及发热；
             # 且移动基站缓冲区深度通常较小（~50ms），BBR 的带宽探测阶段（ProbeRTT）过度降窗可能导致吞吐量骤降，且网络切换（WiFi→5G）时需重新
             # 探测参数，反而增加延迟或导致速率振荡（短暂卡顿），且存在 RTT 不公平性，与基于丢包的流竞争时可能过于强势，在混合网络环境中
-            #（如 BBR + CUBIC 共存），BBR 会抢占更多其他软件的带宽，降低其他其他应用的公平性（如后台软件更新影响前台视频播放）。
+            #（如 BBR + CUBIC 共存），BBR 会抢占更多其他软件的带宽，降低其他应用的公平性（如后台软件更新影响前台视频播放）。
             # 因此，虽然BBR可以显著减少排队延迟，抗丢包能力强，带宽利用率高，但由于其会增加耗电，且易导致网络速率波动，故安卓系统默认不使用
             # BBR拥塞算法，而是使用在吞吐量、稳定性、兼容性、能效之间取得最佳平衡的CUBIC算法。在开启BBR前，请考虑自己是否真的有使用BBR的必要。
             ################################################################################################################################
@@ -706,7 +705,7 @@ jobs:
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在应用KPM并修补内核..."
             cd kernel_workspace/common/out/arch/arm64/boot
-            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
+            curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/p/patch_linux
             chmod +x patch_linux
             ./patch_linux
             rm -f Image
@@ -820,7 +819,7 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - (预留)
+            - 新增10个增量补丁（含cgroup、overlayfs2等核心模块优化，适配LXC/Docker支持）
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

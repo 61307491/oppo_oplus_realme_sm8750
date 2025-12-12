@@ -390,73 +390,79 @@ jobs:
 
       # ====================================== 新增步骤：应用LXC/Docker所需10个增量补丁（bianyi.zip）======================================
       - name: 应用LXC/Docker所需10个增量补丁（bianyi.zip）
-        run: |
-          # 核心配置（适配原脚本内核路径）
-          KERNEL_SRC_DIR="./kernel_workspace/common"
-          PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
-          PATCH_ZIP_NAME="bianyi.zip"
-          PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
+  run: |
+    # 核心配置（适配原脚本内核路径）
+    KERNEL_SRC_DIR="./kernel_workspace/common"
+    PATCH_ZIP_URL="https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/bianyi.zip"
+    PATCH_ZIP_NAME="bianyi.zip"
+    PATCH_UNZIP_DIR="./kernel_workspace/tmp_patches"
 
-          # 日志函数（与原脚本风格统一）
-          log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
-          log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
-          log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
+    # 日志函数（与原脚本风格统一）
+    log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
+    log_warn() { echo -e "\033[33m[WARN] $1\033[0m"; }
+    log_error() { echo -e "\033[31m[ERROR] $1\033[0m"; exit 1; }
 
-          # 检查内核目录
-          if [ ! -d "$KERNEL_SRC_DIR" ]; then
-            log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
-          fi
-          cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
+    # 检查内核目录
+    if [ ! -d "$KERNEL_SRC_DIR" ]; then
+      log_error "内核源码目录不存在：$KERNEL_SRC_DIR"
+    fi
+    cd "$KERNEL_SRC_DIR" || log_error "无法进入内核源码目录"
 
-          log_info "开始处理bianyi.zip补丁压缩包"
+    log_info "开始处理bianyi.zip补丁压缩包"
 
-          # 下载压缩包（使用aria2c，与原脚本下载工具统一）
-          aria2c -s16 -x16 -k1M "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME"
-          if [ ! -f "../$PATCH_ZIP_NAME" ]; then
-            log_error "bianyi.zip压缩包下载失败，请检查URL有效性"
-          fi
+    # 下载压缩包（使用aria2c，与原脚本下载工具统一）
+    aria2c -s16 -x16 -k1M "$PATCH_ZIP_URL" -o "../$PATCH_ZIP_NAME" || log_error "bianyi.zip压缩包下载失败，请检查URL有效性"
+    if [ ! -f "../$PATCH_ZIP_NAME" ]; then
+      log_error "bianyi.zip压缩包下载失败，请检查URL有效性"
+    fi
 
-          # 解压压缩包
-          mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
-          unzip -q -o "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR"
-          if [ $? -ne 0 ]; then
-            log_error "bianyi.zip压缩包解压失败，可能是文件损坏"
-          fi
+    # 解压压缩包并输出结构（方便排查路径）
+    mkdir -p "../$PATCH_UNZIP_DIR" || log_error "无法创建临时解压目录"
+    unzip -q -o "../$PATCH_ZIP_NAME" -d "../$PATCH_UNZIP_DIR"
+    if [ $? -ne 0 ]; then
+      log_error "bianyi.zip压缩包解压失败，可能是文件损坏"
+    fi
+    log_info "压缩包解压完成，实际文件结构如下："
+    find "../$PATCH_UNZIP_DIR" -type f | grep -E "\.patch$" || log_warn "未找到任何.patch文件，请检查压缩包内容"
 
-          # 10个补丁在压缩包内的路径（精准对应目标文件）
-          declare -A PATCH_PATHS=(
-            ["build.config.gki"]="build.config.gki.patch"
-            ["overlayfs_params"]="fs/overlayfs/params.c.patch"
-            ["overlayfs_super"]="fs/overlayfs/super.c.patch"
-            ["overlayfs_util"]="fs/overlayfs/util.c.patch"
-            ["netdevice.h"]="include/linux/netdevice.h.patch"
-            ["sched.h"]="include/linux/sched.h.patch"
-            ["cgroup.c"]="kernel/cgroup/cgroup.c.patch"
-            ["module_main"]="module/main.c.patch"
-            ["module_version"]="module/version.c.patch"
-            ["module_pid"]="module/pid.c.patch"
-          )
+    # 10个目标补丁（简化路径匹配，适配可能的目录结构）
+    declare -a TARGET_PATCHES=(
+      "build.config.gki.patch"
+      "params.c.patch"
+      "super.c.patch"
+      "util.c.patch"
+      "netdevice.h.patch"
+      "sched.h.patch"
+      "cgroup.c.patch"
+      "main.c.patch"
+      "version.c.patch"
+      "pid.c.patch"
+    )
 
-          # 逐个应用补丁
-          log_info "开始批量应用10个增量补丁"
-          for patch_key in "${!PATCH_PATHS[@]}"; do
-            patch_path="../$PATCH_UNZIP_DIR/${PATCH_PATHS[$patch_key]}"
-            if [ ! -f "$patch_path" ]; then
-              log_error "压缩包内缺失补丁：${PATCH_PATHS[$patch_key]}"
-            fi
-            log_info "正在应用补丁：${PATCH_PATHS[$patch_key]}"
-            patch -p1 < "$patch_path"
-            if [ $? -eq 0 ]; then
-              log_info "补丁应用成功：${PATCH_PATHS[$patch_key]}"
-            else
-              log_warn "补丁应用警告：${PATCH_PATHS[$patch_key]}（可能是版本偏移，可忽略）"
-            fi
-          done
+    # 逐个查找并应用补丁（容错路径）
+    log_info "开始批量应用10个增量补丁（自动匹配路径）"
+    for target_patch in "${TARGET_PATCHES[@]}"; do
+      # 递归查找补丁文件（忽略目录层级）
+      patch_path=$(find "../$PATCH_UNZIP_DIR" -name "$target_patch" -type f | head -n1)
+      if [ -z "$patch_path" ]; then
+        log_warn "未找到补丁：$target_patch，跳过应用"
+        continue
+      fi
 
-          # 清理临时文件（保持源码目录整洁）
-          rm -f "../$PATCH_ZIP_NAME"
-          rm -rf "../$PATCH_UNZIP_DIR"
-          log_info "bianyi.zip补丁应用完成，临时文件已清理"
+      # 应用找到的补丁
+      log_info "正在应用补丁（实际路径）：$patch_path"
+      patch -p1 < "$patch_path"
+      if [ $? -eq 0 ]; then
+        log_info "补丁应用成功：$target_patch"
+      else
+        log_warn "补丁应用警告：$target_patch（可能是版本偏移或已应用，可忽略）"
+      fi
+    done
+
+    # 清理临时文件（保持源码目录整洁）
+    rm -f "../$PATCH_ZIP_NAME"
+    rm -rf "../$PATCH_UNZIP_DIR"
+    log_info "bianyi.zip补丁应用流程完成，临时文件已清理"
       # ====================================== 新增步骤结束 ======================================
           
       - name: 添加SUSFS 配置项

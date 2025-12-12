@@ -133,16 +133,16 @@ jobs:
       - name: 下载并解压10个增量补丁（bianyi.zip）
         run: |
           cd kernel_workspace
-          # 安装aria2c（高并发下载工具，适配阿里云盘分享链接）
+          # 安装aria2c（高并发下载工具，适配微云分享链接）
           sudo apt-get install -y aria2
           
-          # 直接通过分享链接下载（免CLI，突破下载限制）
-          echo "正在下载10个增量补丁包..."
-          aria2c -s 16 -x 16 -k 1M "https://www.alipan.com/t/v5vmHvpEH1UAUmH4GfdR" -o bianyi.zip --allow-overwrite=true --no-check-certificate
+          # 微云分享链接直接下载（自动跳转直链，无需登录）
+          echo "正在从微云下载10个增量补丁包..."
+          aria2c -s 16 -x 16 -k 1M "https://share.weiyun.com/636fl714" -o bianyi.zip --allow-overwrite=true --no-check-certificate --follow-metalink=true
           
-          # 验证下载是否成功
-          if [ ! -f "bianyi.zip" ]; then
-            echo "❌ 补丁包下载失败，请检查分享链接是否有效"
+          # 验证下载是否成功（微云下载后文件名可能为index.html，需判断）
+          if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1024 ]; then
+            echo "❌ 补丁包下载失败，可能是链接失效或需要提取码"
             exit 1
           fi
           

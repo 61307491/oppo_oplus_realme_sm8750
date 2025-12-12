@@ -139,46 +139,55 @@ jobs:
           # GitHub补丁包直链（单独列出，便于修改维护）
           PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/bianyi.zip"
           
-          # 下载补丁包（GitHub需添加 --follow-location 跟随跳转，获取原始文件）
-          echo "正在从GitHub下载10个增量补丁包，链接：$PATCH_URL"
-          aria2c -s 16 -x 16 -k 1M \
-            --follow-location=true \
-            --no-check-certificate \
-            --allow-overwrite=true \
-            -o bianyi.zip \
-            "$PATCH_URL"
-          
-          # 双重验证下载有效性（文件存在+大小≥1MB，避免下载到HTML页面）
-          if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1048576 ]; then
-            echo "❌ 补丁包下载失败！请检查GitHub链接是否有效（需为原始文件链接，而非预览页）"
+          # ===================== 单独列出：GitHub下载10个增量补丁（bianyi.zip）=====================
+- name: 下载并解压10个增量补丁（bianyi.zip）
+  run: |
+    cd kernel_workspace
+    # 安装aria2c（高并发下载工具，适配GitHub链接）
+    sudo apt-get install -y aria2
+    
+    # GitHub原始文件链接（关键修改：将blob改为raw，获取可直接下载的文件）
+    PATCH_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/bianyi.zip"
+    
+    # 下载补丁包（移除无效参数，保留核心配置）
+    echo "正在从GitHub下载10个增量补丁包，链接：$PATCH_URL"
+    aria2c -s 16 -x 16 -k 1M \
+      --no-check-certificate \
+      --allow-overwrite=true \
+      -o bianyi.zip \
+      "$PATCH_URL"
+    
+    # 双重验证下载有效性（文件存在+大小≥1MB，避免下载失败）
+    if [ ! -f "bianyi.zip" ] || [ $(stat -c%s "bianyi.zip") -lt 1048576 ]; then
+      echo "❌ 补丁包下载失败！请检查链接是否有效（当前链接：$PATCH_URL）"
+      exit 1
+    fi
+    
+    # 解压补丁到内核源码目录（精准覆盖对应文件）
+    echo "正在解压并应用补丁..."
+    unzip -o bianyi.zip -d common/
+    
+    # 校验10个关键补丁文件完整性
+    CHECK_FILES=(
+        "common/build.config.gki"
+        "common/fs/overlayfs/params.c"
+        "common/fs/overlayfs/super.c"
+        "common/fs/overlayfs/util.c"
+        "common/include/linux/netdevice.h"
+        "common/include/linux/sched.h"
+        "common/kernel/cgroup/cgroup.c"
+        "common/kernel/module/main.c"
+        "common/kernel/module/version.c"
+        "common/kernel/cgroup/pid.c"
+    )
+    for file in "${CHECK_FILES[@]}"; do
+        if [ ! -f "$file" ]; then
+            echo "❌ 关键补丁文件缺失：$file"
             exit 1
-          fi
-          
-          # 解压补丁到内核源码目录（精准覆盖对应文件）
-          echo "正在解压并应用补丁..."
-          unzip -o bianyi.zip -d common/
-          
-          # 校验10个关键补丁文件完整性
-          CHECK_FILES=(
-              "common/build.config.gki"
-              "common/fs/overlayfs/params.c"
-              "common/fs/overlayfs/super.c"
-              "common/fs/overlayfs/util.c"
-              "common/include/linux/netdevice.h"
-              "common/include/linux/sched.h"
-              "common/kernel/cgroup/cgroup.c"
-              "common/kernel/module/main.c"
-              "common/kernel/module/version.c"
-              "common/kernel/cgroup/pid.c"
-          )
-          for file in "${CHECK_FILES[@]}"; do
-              if [ ! -f "$file" ]; then
-                  echo "❌ 关键补丁文件缺失：$file"
-                  exit 1
-              fi
-          done
-          echo "✅ 10个增量补丁已成功应用到内核源码"
-      # ===================== 补丁下载步骤结束 =====================
+        fi
+    done
+    echo "✅ 10个增量补丁已成功应用到内核源码"
+# ===================== 补丁下载步骤结束 =====================
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV

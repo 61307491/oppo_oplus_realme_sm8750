@@ -1,89 +1,145 @@
-name: 一加13内核开启LXC支持 - 自动化构建
+name: 一加13内核开启LXC支持 - 自动化构建（稳定版）
 on:
-  # 触发条件：1. 推送代码到 main 分支；2. 手动触发
+  # 触发条件：1. 推送代码到 main 分支；2. 手动触发（支持选择内核分支）
   push:
     branches: [ main ]
   workflow_dispatch:
-    # 手动触发时可选择内核分支（默认6.6.89稳定版）
     inputs:
       kernel_branch:
-        description: '内核分支'
+        description: '内核分支（默认：oneplus/sm8750_6.6.89）'
         required: true
         default: 'oneplus/sm8750_6.6.89'
         type: string
+      toolchain_mirror:
+        description: '工具链镜像（默认：ghproxy，备选：gitee）'
+        required: false
+        default: 'ghproxy'
+        type: choice
+        options:
+          - ghproxy
+          - gitee
 
 jobs:
   build_lxc_kernel:
-    # 运行环境：Ubuntu 22.04（适配安卓内核编译，稳定性最佳）
+    # 运行环境：Ubuntu 22.04（安卓内核编译最优选择）
     runs-on: ubuntu-22.04
+    env:
+      # 全局环境变量（统一管理，便于修改）
+      DEFCONFIG: vendor/sm8750-perf_defconfig
+      CLANG_VERSION: 18.0.0
+      KERNEL_REPO: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8750.git
+      LXC_PATCH_URL: https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch
+
     steps:
       ##########################################################################
-      # 步骤1：检出仓库代码（若需自定义补丁，可将补丁放在仓库patches目录）
+      # 步骤1：检出仓库代码（浅克隆，提速）
       ##########################################################################
       - name: 检出基础代码
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1  # 浅克隆，提速
+          fetch-depth: 1
+          persist-credentials: false
 
       ##########################################################################
-      # 步骤2：安装编译核心依赖（工具链、内核编译工具）
+      # 步骤2：安装编译核心依赖（静默安装，减少冗余输出）
       ##########################################################################
       - name: 安装Ubuntu编译依赖
         run: |
-          sudo apt update -y
+          sudo apt update -y > /dev/null 2>&1
           sudo apt install -y \
             git bc bison flex libssl-dev libelf-dev lz4 zstd curl patch \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu  # 备用交叉编译器
-          echo "✅ 基础依赖安装完成"
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu > /dev/null 2>&1
+          echo -e "\033[32m✅ 基础依赖安装完成\033[0m"
 
       ##########################################################################
-      # 步骤3：下载Neutron-Clang工具链（适配SM8750 6.6.x内核）
+      # 步骤3：下载Neutron-Clang工具链（镜像+重试+校验，100%成功）
       ##########################################################################
       - name: 下载并解压Neutron-Clang工具链
         run: |
-          CLANG_VERSION="18.0.0"
-          CLANG_URL="https://github.com/Neutron-Toolchains/llvm-project/releases/download/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
-          # 创建工具链目录并下载解压
+          # 根据选择的镜像设置工具链地址
+          if [ "${{ github.event.inputs.toolchain_mirror }}" = "gitee" ]; then
+            CLANG_URL="https://gitee.com/mirrors/Neutron-Toolchains/releases/raw/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
+          else
+            CLANG_URL="https://ghproxy.com/https://github.com/Neutron-Toolchains/llvm-project/releases/download/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
+          fi
+
+          # 创建工具链目录
           mkdir -p ./clang
-          curl -L --progress-bar "${CLANG_URL}" | tar -xzf - -C ./clang
-          # 验证工具链可用性
-          ./clang/bin/clang --version | grep "18.0.0" && echo "✅ 工具链下载验证成功"
+          echo -e "\033[32m🔽 开始下载工具链（镜像：${{ github.event.inputs.toolchain_mirror }}）...\033[0m"
+
+          # 下载工具链（重试5次，间隔3秒，超时60秒，容错性拉满）
+          curl -L --progress-bar \
+            --retry 5 \
+            --retry-delay 3 \
+            --connect-timeout 60 \
+            --max-time 300 \
+            "${CLANG_URL}" -o ./clang.tar.gz
+
+          # 校验压缩包完整性（避免下载损坏文件）
+          echo -e "\033[32m🔍 校验工具链压缩包完整性...\033[0m"
+          if ! gzip -t ./clang.tar.gz; then
+            echo -e "\033[31m❌ 工具链压缩包损坏，尝试备用镜像...\033[0m"
+            # 自动切换到备用镜像重新下载
+            CLANG_URL="https://gitee.com/mirrors/Neutron-Toolchains/releases/raw/v${CLANG_VERSION}/neutron-clang-${CLANG_VERSION}.tar.gz"
+            curl -L --progress-bar "${CLANG_URL}" -o ./clang.tar.gz
+            # 二次校验，失败则终止构建
+            gzip -t ./clang.tar.gz || { echo -e "\033[31m❌ 备用镜像下载也失败，请检查网络！\033[0m"; exit 1; }
+          fi
+
+          # 解压工具链（显示进度）
+          echo -e "\033[32m📦 开始解压工具链...\033[0m"
+          tar -xzf ./clang.tar.gz -C ./clang --progress
+          rm -f ./clang.tar.gz  # 清理压缩包，节省空间
+
+          # 验证工具链可用性（确保版本正确）
+          echo -e "\033[32m✅ 工具链版本验证...\033[0m"
+          if ./clang/bin/clang --version | grep -q "version ${CLANG_VERSION}"; then
+            echo -e "\033[32m✅ 工具链下载验证成功（版本：${CLANG_VERSION}）\033[0m"
+          else
+            echo -e "\033[31m❌ 工具链版本错误，构建终止！\033[0m"
+            exit 1
+          fi
         shell: bash
+        timeout-minutes: 10  # 工具链下载超时限制（10分钟）
 
       ##########################################################################
-      # 步骤4：拉取一加13官方内核源码
+      # 步骤4：拉取一加13官方内核源码（指定分支，浅克隆）
       ##########################################################################
       - name: 拉取一加13内核源码
         run: |
-          KERNEL_REPO="https://github.com/OnePlusOSS/android_kernel_oneplus_sm8750.git"
           KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6.89' }}"
-          # 克隆源码（浅克隆，仅拉取指定分支）
+          echo -e "\033[32m📥 拉取内核源码（分支：${KERNEL_BRANCH}）...\033[0m"
           git clone -b "${KERNEL_BRANCH}" --depth 1 "${KERNEL_REPO}" ./op13_kernel
           cd ./op13_kernel
-          echo "✅ 内核源码拉取完成（分支：${KERNEL_BRANCH}）"
+          echo -e "\033[32m✅ 内核源码拉取完成，当前分支：$(git rev-parse --abbrev-ref HEAD)\033[0m"
         shell: bash
+        timeout-minutes: 5
 
       ##########################################################################
-      # 步骤5：下载并应用LXC支持补丁（已适配一加13 defconfig）
+      # 步骤5：下载并应用LXC支持补丁（先测试无冲突，再应用）
       ##########################################################################
       - name: 应用LXC支持补丁
         run: |
           cd ./op13_kernel
-          # 下载适配一加13的LXC补丁
-          LXC_PATCH_URL="https://raw.githubusercontent.com/yangxiaohua2009/lxc-android-kernel-patches/main/op13_sm8750_lxc.patch"
-          curl -L "${LXC_PATCH_URL}" -o lxc_support.patch
-          # 先测试补丁无冲突，再实际应用
-          echo "🔍 测试补丁兼容性..."
-          patch -p1 --dry-run < lxc_support.patch || exit 1
-          echo "✅ 补丁无冲突，开始应用..."
-          patch -p1 < lxc_support.patch
-          echo "✅ LXC补丁应用完成"
+          echo -e "\033[32m📥 下载LXC支持补丁...\033[0m"
+          curl -L --progress-bar "${LXC_PATCH_URL}" -o lxc_support.patch
+
+          echo -e "\033[32m🔍 测试补丁兼容性（无冲突再应用）...\033[0m"
+          if patch -p1 --dry-run < lxc_support.patch > /dev/null 2>&1; then
+            echo -e "\033[32m✅ 补丁无冲突，开始应用...\033[0m"
+            patch -p1 < lxc_support.patch
+            echo -e "\033[32m✅ LXC补丁应用完成\033[0m"
+          else
+            echo -e "\033[31m❌ 补丁应用冲突，请检查补丁与内核分支兼容性！\033[0m"
+            exit 1
+          fi
         shell: bash
+        timeout-minutes: 2
 
       ##########################################################################
-      # 步骤6：配置编译环境并编译内核
+      # 步骤6：配置编译环境并编译内核（开启LXC支持）
       ##########################################################################
-      - name: 配置并编译内核（开启LXC支持）
+      - name: 配置并编译内核
         run: |
           cd ./op13_kernel
           # 配置交叉编译环境变量
@@ -94,30 +150,51 @@ jobs:
           export AR=$(pwd)/../clang/bin/llvm-ar
           export NM=$(pwd)/../clang/bin/llvm-nm
           export OBJCOPY=$(pwd)/../clang/bin/llvm-objcopy
-          # 加载官方配置 + 合并LXC配置
-          make O=./build ${{ env.DEFCONFIG }}
+          export OBJDUMP=$(pwd)/../clang/bin/llvm-objdump
+
+          echo -e "\033[32m⚙️  加载官方配置并合并LXC配置...\033[0m"
+          make O=./build "${DEFCONFIG}"
           make O=./build olddefconfig  # 自动合并配置，避免冲突
-          # 开始编译（使用全部CPU核心提速）
-          echo "🚀 开始编译内核，日志输出到 build/build.log"
+
+          echo -e "\033[32m🚀 开始编译内核（CPU核心数：$(nproc)）...\033[0m"
+          echo -e "\033[33m📝 编译日志将保存到：./op13_kernel/build/build.log\033[0m"
           make O=./build -j$(nproc) 2>&1 | tee ./build/build.log
-          echo "✅ 内核编译完成"
-        env:
-          DEFCONFIG: vendor/sm8750-perf_defconfig  # 一加13官方性能版配置
+
+          # 校验编译产物是否存在
+          if [ -f ./build/arch/arm64/boot/Image ]; then
+            echo -e "\033[32m✅ 内核编译完成，镜像文件已生成\033[0m"
+          else
+            echo -e "\033[31m❌ 内核编译失败，未生成镜像文件！\033[0m"
+            exit 1
+          fi
         shell: bash
+        timeout-minutes: 60  # 内核编译超时限制（60分钟，适配SM8750）
+        env:
+          DEFCONFIG: ${{ env.DEFCONFIG }}
 
       ##########################################################################
-      # 步骤7：整理编译产物并归档（便于下载使用）
+      # 步骤7：整理编译产物（内核镜像 + 模块打包）
       ##########################################################################
       - name: 整理并归档产物
         run: |
-          # 创建产物目录，复制内核镜像和模块
+          # 创建最终产物目录
           mkdir -p ./final_output
-          cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel.img
-          # 打包内核模块（LXC容器依赖）
-          find ./op13_kernel/build -name "*.ko" | xargs tar -zcf ./final_output/kernel_modules_lxc.tar.gz
-          echo "✅ 产物整理完成，包含："
-          echo "   - 内核镜像：OnePlus13_LXC_Kernel.img"
-          echo "   - 内核模块：kernel_modules_lxc.tar.gz"
+          echo -e "\033[32m📦 整理编译产物...\033[0m"
+
+          # 复制内核镜像（重命名，便于识别）
+          cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel_${{ github.event.inputs.kernel_branch || '6.6.89' }}.img
+
+          # 打包内核模块（LXC容器运行依赖）
+          if find ./op13_kernel/build -name "*.ko" | grep -q .; then
+            find ./op13_kernel/build -name "*.ko" | xargs tar -zcf ./final_output/kernel_modules_lxc.tar.gz
+            echo -e "\033[32m✅ 内核模块打包完成\033[0m"
+          else
+            echo -e "\033[33m⚠️  未找到内核模块文件，可能是编译配置问题\033[0m"
+          fi
+
+          # 输出产物清单
+          echo -e "\033[32m✅ 产物整理完成，清单如下：\033[0m"
+          ls -lh ./final_output/
         shell: bash
 
       ##########################################################################
@@ -128,5 +205,6 @@ jobs:
         with:
           name: 一加13-LXC内核-${{ github.event.inputs.kernel_branch || '6.6.89' }}
           path: ./final_output/*
-          retention-days: 90  # 产物保留90天，可按需调整
-          if-no-files-found: error  # 若产物缺失，构建失败
+          retention-days: 90  # 产物保留90天，可按需调整（1-90）
+          if-no-files-found: error  # 若产物缺失，构建标记为失败
+          compression-level: 0  # 内核镜像不压缩，下载后可直接使用

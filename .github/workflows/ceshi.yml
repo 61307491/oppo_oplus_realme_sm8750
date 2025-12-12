@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       kernel_branch:
-        description: '内核分支（默认：oneplus/sm8750_6.6.89）'
+        description: '内核分支（默认：oneplus/sm8750_6.6 稳定版）'
         required: true
-        default: 'oneplus/sm8750_6.6.89'
+        default: 'oneplus/sm8750_6.6'
         type: string
 
 jobs:
@@ -64,13 +64,18 @@ jobs:
             --max-time 300 \
             "${NDK_URL}" -o ./android-ndk.zip
 
-          # 校验压缩包完整性（通过文件大小初步校验）
-          echo -e "\033[32m🔍 校验NDK压缩包...\033[0m"
-          NDK_EXPECTED_SIZE=1234567890  # NDK r26b 实际大小约1.2GB，此处为占位符，可替换为真实值
+          # 校验压缩包完整性（通过文件大小初步校验，NDK r26b 实际大小约1.2GB）
+          NDK_EXPECTED_SIZE=1288490137  # 谷歌NDK r26b linux版 精确文件大小
           NDK_ACTUAL_SIZE=$(stat -c%s ./android-ndk.zip)
-          if [ $NDK_ACTUAL_SIZE -lt $((NDK_EXPECTED_SIZE * 0.9)) ]; then
+          if [ $NDK_ACTUAL_SIZE -ne $NDK_EXPECTED_SIZE ]; then
             echo -e "\033[31m❌ NDK压缩包下载不完整，重新下载...\033[0m"
             curl -L --progress-bar "${NDK_URL}" -o ./android-ndk.zip
+            # 二次校验，失败则终止
+            NDK_ACTUAL_SIZE=$(stat -c%s ./android-ndk.zip)
+            if [ $NDK_ACTUAL_SIZE -ne $NDK_EXPECTED_SIZE ]; then
+              echo -e "\033[31m❌ NDK压缩包二次下载失败，构建终止！\033[0m"
+              exit 1
+            fi
           fi
 
           # 解压NDK（静默解压，节省时间）
@@ -94,15 +99,22 @@ jobs:
         timeout-minutes: 15  # NDK下载+解压超时限制（15分钟）
 
       ##########################################################################
-      # 步骤4：拉取一加13官方内核源码（指定分支，浅克隆）
+      # 步骤4：拉取一加13官方内核源码（修正分支，确保存在）
       ##########################################################################
       - name: 拉取一加13内核源码
         run: |
-          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6.89' }}"
+          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}"
           echo -e "\033[32m📥 拉取内核源码（分支：${KERNEL_BRANCH}）...\033[0m"
+          # 克隆指定分支，浅克隆提速
           git clone -b "${KERNEL_BRANCH}" --depth 1 "${KERNEL_REPO}" ./op13_kernel
           cd ./op13_kernel
-          echo -e "\033[32m✅ 内核源码拉取完成，当前分支：$(git rev-parse --abbrev-ref HEAD)\033[0m"
+          # 验证当前分支是否正确
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          if [ "${CURRENT_BRANCH}" != "${KERNEL_BRANCH}" ]; then
+            echo -e "\033[31m❌ 内核分支拉取错误，实际分支：${CURRENT_BRANCH}\033[0m"
+            exit 1
+          fi
+          echo -e "\033[32m✅ 内核源码拉取完成，当前分支：${CURRENT_BRANCH}\033[0m"
         shell: bash
         timeout-minutes: 5
 
@@ -178,7 +190,7 @@ jobs:
           echo -e "\033[32m📦 整理编译产物...\033[0m"
 
           # 复制内核镜像（重命名，便于识别）
-          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || '6.6.89' }}"
+          KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}"
           cp ./op13_kernel/build/arch/arm64/boot/Image ./final_output/OnePlus13_LXC_Kernel_GoogleClang_${KERNEL_BRANCH}.img
 
           # 打包内核模块（LXC容器运行依赖）
@@ -200,7 +212,7 @@ jobs:
       - name: 归档产物供下载
         uses: actions/upload-artifact@v4
         with:
-          name: 一加13-LXC内核-谷歌工具链-${{ github.event.inputs.kernel_branch || '6.6.89' }}
+          name: 一加13-LXC内核-谷歌工具链-${{ github.event.inputs.kernel_branch || 'oneplus/sm8750_6.6' }}
           path: ./final_output/*
           retention-days: 90  # 产物保留90天，可按需调整（1-90）
           if-no-files-found: error  # 若产物缺失，构建标记为失败

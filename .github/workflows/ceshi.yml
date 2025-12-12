@@ -389,7 +389,7 @@ jobs:
           patch -p1 -F 3 < lz4kd.patch || true
 
       # ====================================== 新增步骤：应用LXC/Docker所需10个增量补丁（bianyi.zip）======================================
-      - name: 应用LXC/Docker所需10个增量补丁（bianyi.zip）
+     - name: 应用LXC/Docker所需10个增量补丁（bianyi.zip）
   run: |
     # 核心配置（适配原脚本内核路径）
     KERNEL_SRC_DIR="./kernel_workspace/common"
@@ -463,6 +463,7 @@ jobs:
     rm -f "../$PATCH_ZIP_NAME"
     rm -rf "../$PATCH_UNZIP_DIR"
     log_info "bianyi.zip补丁应用流程完成，临时文件已清理"
+
       # ====================================== 新增步骤结束 ======================================
           
       - name: 添加SUSFS 配置项

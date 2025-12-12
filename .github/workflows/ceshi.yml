@@ -188,6 +188,7 @@ jobs:
     done
     echo "✅ 10个增量补丁已成功应用到内核源码"
 # ===================== 补丁下载步骤结束 =====================
+
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV

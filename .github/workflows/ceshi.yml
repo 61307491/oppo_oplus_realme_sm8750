@@ -177,12 +177,10 @@ jobs:
             sleep 2
           done
           [ ! -f "browser_patches.zip" ] && echo "补丁包下载失败，终止构建！" && exit 1
-
           # 2. 解压补丁包
           mkdir -p browser_patches
           unzip -q browser_patches.zip -d browser_patches
           echo "Browser.zip解压完成"
-
           # 3. 精准替换指定文件
           echo "开始替换核心文件..."
           # 替换fs/overlayfs目录
@@ -198,7 +196,6 @@ jobs:
           # 替换build.config.gki
           cp -f browser_patches/build.config.gki common/ 2>/dev/null || true
           echo "所有指定文件替换完成"
-
           # 4. 清理临时文件
           rm -rf browser_patches.zip browser_patches
       # 原有步骤：添加KernelSU（保持不变）
@@ -432,6 +429,18 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
+      # 新增：补充缺失的基础功能配置项（仅此部分为新增，其余均为原有代码）
+      - name: 补充缺失的基础功能配置项
+        run: |
+          cd kernel_workspace
+          echo "正在补充缺失的内核基础配置项..."
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "缺失配置项补充完成！"
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |

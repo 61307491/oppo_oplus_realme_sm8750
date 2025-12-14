@@ -82,7 +82,6 @@ on:
         required: false
         type: string
         default: ''
-      # 新增：LXC 补丁启用选项，让用户可自主控制是否集成
       lxc_enable:
         description: '是否启用LXC容器支持(需依赖内核6.6版本，启用后增加容器运行能力)'
         required: true
@@ -106,8 +105,6 @@ jobs:
           sudo rm -rf /var/lib/man-db/auto-update &&
           sudo apt update &&
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
-          #旧版完整指令：（由于经过验证大部分指令已内置于GitHub Action环境中，故进行精简）
-          #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
@@ -153,7 +150,6 @@ jobs:
       
       - name: 初始化并配置ccache
         run: |
-          # 设置ccache环境变量
           export CCACHE_COMPILERCHECK="none"
           export CCACHE_BASEDIR="${{ github.workspace }}"
           export CCACHE_NOHASHDIR="true"
@@ -161,19 +157,14 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           export CCACHE_MAXSIZE="${{ env.CCACHE_MAXSIZE }}"
           
-          # 确保ccache目录存在
           mkdir -p "$CCACHE_DIR"
-          
-          # 每次运行都重新配置缓存大小
           echo "配置ccache缓存大小为: $CCACHE_MAXSIZE"
           ccache -M "$CCACHE_MAXSIZE"
           ccache -o compression=true
           
-          # 显示初始缓存状态
           echo "ccache初始状态:"
           ccache -s
           
-          # 如果缓存恢复命中，显示详细信息
           if [ "${{ steps.ccache-restore.outputs.cache-hit }}" == 'true' ]; then
             echo "ccache缓存命中详情:"
             ccache -sv
@@ -181,61 +172,37 @@ jobs:
       - name: 添加KernelSU
         id: ksu_version
         run: |
-          # 进入内核工作目录
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在配置SukiSU Ultra..."
             curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s tmp-builtin
             cd ./KernelSU
-            # 获取当前 Git 提交的短哈希 (8位)
             GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
             echo "当前提交哈希: $GIT_COMMIT_HASH"
             export KSU_VERSION=$KSU_VERSION
-            # 尝试最多 3 次获取 KernelSU API 版本号
             for i in {1..3}; do
-              # 从远程 Kbuild 中提取 KSU_API_VERSION
               KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/tmp-builtin/kernel/Kbuild" | 
-                # 查找第一个包含版本定义的行
                 grep -m1 "KSU_VERSION_API :=" | 
-                # 提取等号后的值
                 awk -F'= ' '{print $2}' | 
-                # 删除所有空白字符
                 tr -d '[:space:]')
-              # 如果成功获取到版本号则跳出循环，否则等待 1 秒后重试
               [ -n "$KSU_API_VERSION" ] && break || sleep 1
             done
-            # 如果获取失败，使用默认版本号 3.1.7
             [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
-            # 将 API 版本号存储到 GitHub 环境变量
             echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-            # 创建版本定义模板&版本格式函数: 使用获取的提交哈希和固定后缀
-            # KSU_VERSION_API: API 版本定义
-            # KSU_VERSION_FULL: 完整版本定义
             VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'@cctv18\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'@cctv18'
-            # 清理内核 Kbuild 中的旧版本定义
-            # 删除版本函数
             sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
-            # 删除 API 版本定义
             sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
-            # 删除完整版本定义
             sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
-            # 在 REPO_OWNER 行后插入新版本定义
             awk -v def="$VERSION_DEFINITIONS" '
-              # 当找到 REPO_OWNER 行时，插入版本定义并设置标记
               /REPO_OWNER :=/ {print; print def; inserted=1; next}
-              # 打印所有行
               1
-              # 如果未找到插入点，在文件末尾追加
               END {if (!inserted) print def}
             ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
-            # 生成自定义版本号（基于提交计数）, 失败时使用 114514
             KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
-            # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
-            # 验证修改结果
-            grep -A10 "REPO_OWNER" kernel/Kbuild  # 检查插入点后的内容
-            grep "KSU_VERSION_FULL" kernel/Kbuild # 确认版本定义存在
+            grep -A10 "REPO_OWNER" kernel/Kbuild
+            grep "KSU_VERSION_FULL" kernel/Kbuild
             echo "SukiSU版本号: v${KSU_API_VERSION}-${GIT_COMMIT_HASH}@cctv18"
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在配置KernelSU Next..."
@@ -245,7 +212,6 @@ jobs:
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-            #为KernelSU Next添加WildKSU管理器支持
             cd ../common/drivers/kernelsu
             wget https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch
             patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
@@ -284,7 +250,6 @@ jobs:
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在添加KernelSU Next补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            #由于KernelSU Next尚未更新并适配susfs 2.0.0，故回退至susfs 1.5.12
             cd susfs4ksu && git checkout f450ec00bf592d080f59b01ff6f9242456c9a427 && cd ..
             git clone https://github.com/WildKernels/kernel_patches.git
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
@@ -301,7 +266,6 @@ jobs:
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             git clone https://github.com/ShirkNeko/SukiSU_patch.git
             cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
-            # 临时修复：修复susfs补丁日志输出（由于上游KSU把部分Makefile代码移至Kbuild中，而susfs补丁未同步修改，故需修复susfs补丁修补位点）
             PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$PATCH_FILE" ]; then
               if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
@@ -324,7 +288,6 @@ jobs:
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
-            #为MKSU修正susfs 2.0.0补丁
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
             patch -p1 < mksu_supercalls.patch || true
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/fix_umount.patch
@@ -337,13 +300,12 @@ jobs:
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             git clone https://github.com/ShirkNeko/SukiSU_patch.git
             cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
-            # 临时修复：修复susfs补丁日志输出（由于上游KSU把部分Makefile代码移至Kbuild中，而susfs补丁未同步修改，故需修复susfs补丁修补位点）
             PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$PATCH_FILE" ]; then
               if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
                 echo "检测到旧版 Makefile 补丁代码，正在执行修复..."
                 sed -i 's|kernel/Makefile|kernel/Kbuild|g' "$PATCH_FILE"
-                sed -i 's|.*compdb.*|@@ -75,4 +75,13 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
+                sed -i 's|.*compdb.*|@@ -75,4 +75,113 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
                 sed -i 's|^ clean:| ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes|' "$PATCH_FILE"
                 sed -i 's|.*make -C.*| ccflags-y += -Wno-declaration-after-statement -Wno-unused-function|' "$PATCH_FILE"
                 echo "补丁修复完成！"
@@ -367,96 +329,85 @@ jobs:
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           fi
       
-      # 新增：应用 LXC 容器支持补丁（修复文件冲突）
-- name: 应用 LXC 容器支持补丁
-  if: inputs.lxc_enable
-  run: |
-    echo "========================================"
-    echo "         开始应用 LXC 支持补丁          "
-    echo "========================================"
-    cd kernel_workspace
-    # 进入内核源码根目录（已在初始化步骤完成克隆，路径为 common）
-    if [ ! -d "common/kernel/cgroup" ]; then
-        echo "错误：内核源码目录缺失 kernel/cgroup 目录，LXC 补丁应用失败"
-        exit 1
-    fi
-    cd common
-    
-    # 安装 LXC 补丁依赖工具（dos2unix 用于修复格式）
-    echo "→ 安装补丁处理依赖工具..."
-    sudo apt-get update -qq >/dev/null
-    sudo apt-get install -y dos2unix wget -qq >/dev/null
-    
-    # 清理旧文件，避免冲突
-    echo "→ 清理旧补丁文件..."
-    rm -f lxc.patch build.patch cgroup.patch
-    
-    # 下载原始补丁（直接从 raw 地址获取，避免格式损坏）
-    echo "→ 下载 LXC 补丁..."
-    wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/lxc.patch -O lxc.patch
-    if [ ! -f "lxc.patch" ] || [ ! -s "lxc.patch" ]; then
-        echo "错误：LXC 补丁下载失败（文件不存在或为空）"
-        exit 1
-    fi
-    
-    # 修复补丁格式（关键步骤，解决 corrupt patch 问题）
-    echo "→ 修复补丁格式..."
-    dos2unix lxc.patch 2>/dev/null  # 转换 Windows 换行符
-    sed -i '/^$/d' lxc.patch       # 删除多余空行
-    sed -i 's/\r//g' lxc.patch     # 删除回车符
-    sed -i 's/^diff --git a\//diff --git /g' lxc.patch  # 修复路径格式
-    
-    # 强制应用补丁（自动应答覆盖已存在文件）
-    echo "→ 强制应用 LXC 补丁..."
-    if echo -e "y\ny" | patch -p1 -F 5 --force < lxc.patch; then
-        echo "→ 完整 LXC 补丁应用成功！"
-    else
-        echo "→ 完整 LXC 补丁应用失败，尝试分段提取应用..."
-        
-        # 修复：不覆盖现有 build.config.gki，仅追加 LXC 必需配置
-        echo "→ 处理 build.config.gki（避免文件冲突，追加配置）..."
-        # 提取补丁中的 update_config 函数逻辑
-        LXC_CONFIG=$(sed -n '/^function update_config() {/,/^}$/p' lxc.patch | sed 's/^[[:space:]]*//')
-        # 检查现有 build.config.gki 是否已包含 LXC 配置
-        if grep -q "CONFIG_POSIX_MQUEUE" build.config.gki; then
-            echo "→ build.config.gki 已包含 LXC 相关配置，跳过追加"
-        else
-            # 追加 LXC 必需的 POST_DEFCONFIG_CMDS 和 update_config 函数
-            cat >> build.config.gki <<EOF
+      # 修复冲突后的 LXC 补丁应用步骤
+      - name: 应用 LXC 容器支持补丁
+        if: inputs.lxc_enable
+        run: |
+          echo "========================================"
+          echo "         开始应用 LXC 支持补丁          "
+          echo "========================================"
+          cd kernel_workspace
+          if [ ! -d "common/kernel/cgroup" ]; then
+              echo "错误：内核源码目录缺失 kernel/cgroup 目录，LXC 补丁应用失败"
+              exit 1
+          fi
+          cd common
+          
+          echo "→ 安装补丁处理依赖工具..."
+          sudo apt-get update -qq >/dev/null
+          sudo apt-get install -y dos2unix wget -qq >/dev/null
+          
+          echo "→ 清理旧补丁文件..."
+          rm -f lxc.patch build.patch cgroup.patch
+          
+          echo "→ 下载 LXC 补丁..."
+          wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/lxc.patch -O lxc.patch
+          if [ ! -f "lxc.patch" ] || [ ! -s "lxc.patch" ]; then
+              echo "错误：LXC 补丁下载失败（文件不存在或为空）"
+              exit 1
+          fi
+          
+          echo "→ 修复补丁格式..."
+          dos2unix lxc.patch 2>/dev/null
+          sed -i '/^$/d' lxc.patch
+          sed -i 's/\r//g' lxc.patch
+          sed -i 's/^diff --git a\//diff --git /g' lxc.patch
+          
+          echo "→ 强制应用 LXC 补丁..."
+          if echo -e "y\ny" | patch -p1 -F 5 --force < lxc.patch; then
+              echo "→ 完整 LXC 补丁应用成功！"
+          else
+              echo "→ 完整 LXC 补丁应用失败，尝试分段提取应用..."
+              
+              # 核心修复：追加配置而非覆盖 build.config.gki
+              echo "→ 处理 build.config.gki（避免文件冲突，追加配置）..."
+              LXC_CONFIG=$(sed -n '/^function update_config() {/,/^}$/p' lxc.patch | sed 's/^[[:space:]]*//')
+              if grep -q "CONFIG_POSIX_MQUEUE" build.config.gki; then
+                  echo "→ build.config.gki 已包含 LXC 相关配置，跳过追加"
+              else
+                  cat >> build.config.gki <<EOF
 
 # LXC 容器支持必需配置（追加自 LXC 补丁）
 POST_DEFCONFIG_CMDS="update_config"
 $LXC_CONFIG
 EOF
-            echo "→ 已向 build.config.gki 追加 LXC 配置"
-        fi
-        
-        # 提取并应用 kernel/cgroup/cgroup.c 补丁块
-        sed -n '/^diff --git kernel\/cgroup\/cgroup.c/,/^diff --git/p' lxc.patch | head -n -4 > cgroup.patch
-        if [ -s cgroup.patch ]; then
-            echo "→ 应用 kernel/cgroup/cgroup.c 补丁块..."
-            # 允许补丁部分应用（忽略无关差异）
-            echo "y" | patch -p1 -F 3 --force --ignore-whitespace < cgroup.patch 2>/dev/null
-            rm -f cgroup.patch
-        else
-            echo "→ 未提取到 cgroup.c 补丁块，尝试下载完整文件..."
-            wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/kernel/cgroup/cgroup.c -O kernel/cgroup/cgroup.c 2>/dev/null
-            if [ ! -f "kernel/cgroup/cgroup.c" ]; then
-                echo "警告：cgroup.c 备份文件下载失败，将使用默认版本"
-            fi
-        fi
-    fi
-    
-    # 验证核心文件并补充关键配置（双重保障）
-    echo "→ 验证并补充 LXC 必需配置..."
-    if [ -f "build.config.gki" ] && [ -f "kernel/cgroup/cgroup.c" ]; then
-        echo "→ LXC 核心文件验证通过！"
-    else
-        echo "警告：LXC 部分核心文件缺失，手动补充配置..."
-    fi
-    
-    # 强制添加 LXC 必需配置（避免补丁遗漏，与内核原有配置合并）
-    cat >> arch/arm64/configs/gki_defconfig <<EOF
+                  echo "→ 已向 build.config.gki 追加 LXC 配置"
+              fi
+              
+              # 提取并应用 cgroup.c 补丁块（忽略空格差异）
+              sed -n '/^diff --git kernel\/cgroup\/cgroup.c/,/^diff --git/p' lxc.patch | head -n -4 > cgroup.patch
+              if [ -s cgroup.patch ]; then
+                  echo "→ 应用 kernel/cgroup/cgroup.c 补丁块..."
+                  echo "y" | patch -p1 -F 3 --force --ignore-whitespace < cgroup.patch 2>/dev/null
+                  rm -f cgroup.patch
+              else
+                  echo "→ 未提取到 cgroup.c 补丁块，尝试下载完整文件..."
+                  wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/kernel/cgroup/cgroup.c -O kernel/cgroup/cgroup.c 2>/dev/null
+                  if [ ! -f "kernel/cgroup/cgroup.c" ]; then
+                      echo "警告：cgroup.c 备份文件下载失败，将使用默认版本"
+                  fi
+              fi
+          fi
+          
+          echo "→ 验证并补充 LXC 必需配置..."
+          if [ -f "build.config.gki" ] && [ -f "kernel/cgroup/cgroup.c" ]; then
+              echo "→ LXC 核心文件验证通过！"
+          else
+              echo "警告：LXC 部分核心文件缺失，手动补充配置..."
+          fi
+          
+          # 追加 LXC 必需配置到 defconfig
+          cat >> arch/arm64/configs/gki_defconfig <<EOF
 # LXC 容器支持必需配置
 CONFIG_CGROUP_DEVICE=y
 CONFIG_CGROUP_FREEZER=y
@@ -467,14 +418,13 @@ CONFIG_IPC_NS=y
 CONFIG_PID_NS=y
 CONFIG_USER_NS=y
 EOF
-    
-    # 清理临时文件
-    echo "→ 清理 LXC 补丁临时文件..."
-    rm -f lxc.patch
-    
-    echo "========================================"
-    echo "         LXC 补丁应用流程完成          "
-    echo "========================================"
+          
+          echo "→ 清理 LXC 补丁临时文件..."
+          rm -f lxc.patch
+          
+          echo "========================================"
+          echo "         LXC 补丁应用流程完成          "
+          echo "========================================"
 
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
@@ -533,7 +483,6 @@ EOF
           if [[ "${{ github.event.inputs.susfs_enable }}" == "false" ]]; then
             echo "CONFIG_KSU_SUSFS=n" >> ./common/arch/arm64/configs/gki_defconfig
           fi
-          #添加对 Mountify (backslashxx/mountify) 模块的支持
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
@@ -543,23 +492,17 @@ EOF
             echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
-          # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./common/build.config.gki
-          #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
           cd kernel_workspace
-          #启用  BPF 流解析器,实现高性能网络流量处理,增强网络监控和分析能力
           echo "CONFIG_BPF_STREAM_PARSER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #开启增强 Netfilter 防火墙扩展模块,支持基于地址类型的匹配规则,启用 IP 集合支持,提高防火墙规则灵活性,支持更复杂的流量过滤策略
           echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NETFILTER_XT_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #启用 IP 集框架及其多种数据结构实现,提供高效的大规模 IP 地址管理,提高防火墙规则处理效率,减少内存占用
           echo "CONFIG_IP_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_SET_MAX=65534" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -578,10 +521,8 @@ EOF
           echo "CONFIG_IP_SET_HASH_NETPORT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP_SET_LIST_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #启用 IPv6 网络地址转换
           echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #由于部分机型的vintf兼容性检测规则，在开启CONFIG_IP6_NF_NAT后开机会出现"您的设备内部出现了问题。请联系您的设备制造商了解详情。"的提示，故添加一个配置修复补丁，在编译内核时隐藏CONFIG_IP6_NF_NAT=y但不影响对应功能编译
           cd common
           wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
           patch -p1 -F 3 < config.patch || true
@@ -590,32 +531,13 @@ EOF
           if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
             echo "正在添加BBR等拥塞控制算法..."
             cd kernel_workspace
-            #开启TCP拥塞控制算法控制器（必需）
             echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-            ################################################################################################################################
-            # BBR：基于链路容量的代表拥塞控制算法，不再使用丢包、延时等信号去衡量拥塞是否发生，而是直接对网络建模来应对、避免真实的网络拥塞；
-            # 具有高吞吐、低延迟、抗丢包的特点，但在手机上使用时由于持续探测带宽/RTT、高频计算与发包增加 CPU 和射频模块功耗，会增加耗电及发热；
-            # 且移动基站缓冲区深度通常较小（~50ms），BBR 的带宽探测阶段（ProbeRTT）过度降窗可能导致吞吐量骤降，且网络切换（WiFi→5G）时需重新
-            # 探测参数，反而增加延迟或导致速率振荡（短暂卡顿），且存在 RTT 不公平性，与基于丢包的流竞争时可能过于强势，在混合网络环境中
-            #（如 BBR + CUBIC 共存），BBR 会抢占更多其他软件的带宽，降低其他应用的公平性（如后台软件更新影响前台视频播放）。
-            # 因此，虽然BBR可以显著减少排队延迟，抗丢包能力强，带宽利用率高，但由于其会增加耗电，且易导致网络速率波动，故安卓系统默认不使用
-            # BBR拥塞算法，而是使用在吞吐量、稳定性、兼容性、能效之间取得最佳平衡的CUBIC算法。在开启BBR前，请考虑自己是否真的有使用BBR的必要。
-            ################################################################################################################################
             echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #CUBIC：安卓的默认TCP拥塞控制算法，在吞吐量、稳定性、兼容性、能效之间取得最佳平衡，具有高兼容性与公平性、抗网络波动性强、低计算开销的特点，是绝大部分移动场景的优先选择
             echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #VEGAS：基于时延的拥塞控制算法之一，将回路响应时间（Round Trip Time，RTT）增加视为出现拥塞，增加时增大拥塞窗口，减小时减小拥塞窗口
             echo "CONFIG_TCP_CONG_VEGAS=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #New Vegas：Vegas 算法的改进版，优化了 RTT 测量和竞争公平性，可以更准确地检测拥塞，与 Reno/CUBIC 共存能力提升
             echo "CONFIG_TCP_CONG_NV=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #Westwood+：基于带宽估计（ACK 到达率）动态设置拥塞窗口和慢启动阈值；快速恢复，适合无线网络（区分拥塞丢包与无线丢包）
             echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #HTCP：一种基于损失的算法，使用 AIMD 来控制拥塞窗口，根据 RTT 动态调整增长因子，结合延迟和丢包信号，针对高延迟的高速网络进行优化
             echo "CONFIG_TCP_CONG_HTCP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            #brutal：一种通过主动探测 + 激进抢占最大化吞吐量的拥塞算法，无拥塞窗口上限，轻度丢包（<20%）不降窗，避免类似 BBR 的 ProbeRTT 阶段，
-            #持续维持高发送速率，与 Reno/CUBIC 共存时，Brutal 可通过高频发包抢占 90%+ 带宽，适用于高丢包弱网环境（如公共 Wi-Fi、蜂窝网络）及
-            #直播推流、云游戏上行链路等需优先保证吞吐量而非延迟敏感的场景，提升弱网吞吐性能，对抗运营商 QoS 限速。但由于TCP Brutal 仅在应用程序
-            #对每个 TCP 连接设置带宽参数之后才能正常工作，绝大部分安卓应用都不支持该操作，故请勿将 TCP Brutal 设置成默认拥塞控制算法。
             echo "CONFIG_TCP_CONG_BRUTAL=y" >> ./common/arch/arm64/configs/gki_defconfig
             if [[ "${{ github.event.inputs.bbr_enable }}" == "default" ]]; then
               echo "正在将BBR设为默认拥塞控制算法..."
@@ -721,39 +643,37 @@ EOF
           echo "FAKETIME=$FAKETIME" >> $GITHUB_ENV
           SO_DIR=$(pwd)
           export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
-          #创建 CC (编译器) 包装器
+          
           echo '#!/bin/bash' > cc-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
           echo 'ccache clang "$@"' >> cc-wrapper
-          #创建 LD (链接器) 包装器
+          
           echo '#!/bin/bash' > ld-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
           echo 'ld.lld "$@"' >> ld-wrapper
           
-          # 测试时间劫持测试是否正常工作
           echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
           echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
           echo 'export FAKETIME="'$FAKETIME'"' >> test-wrapper.sh
           echo 'echo ">>> Wrapper 内部环境检查完毕."' >> test-wrapper.sh
-          echo 'exec "$@"' >> test-wrapper.sh # 执行所有传入的参数
+          echo 'exec "$@"' >> test-wrapper.sh
           chmod +x test-wrapper.sh
           echo "--- [Wrapper Test] 正在测试 (date) 命令 ---"
           ./test-wrapper.sh date
           echo "--- [Wrapper Test] 正在测试 (stat) 命令 ---"
           ./test-wrapper.sh stat ./Makefile
-          echo "--- [Wrapper Test] 测试完毕 ---"
+          echo "--- [Wrapper Test]  测试完毕 ---"
           chmod +x cc-wrapper ld-wrapper
           echo "--- 编译前环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译前环境文件时间戳: ---"
           LD_PRELOAD=$PRELOAD_LIBS stat ./Makefile
           
-          #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
           sudo rm -rf /usr/share/dotnet &
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
@@ -761,7 +681,6 @@ EOF
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
           
-          # 编译后时间劫持二次校验
           echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译后环境文件时间戳: ---"
           LD_PRELOAD=$PRELOAD_LIBS stat ./Makefile
@@ -884,14 +803,14 @@ EOF
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - LXC容器支持：${{ github.event.inputs.lxc_enable }}  # 新增：显示LXC启用状态
+            - LXC容器支持：${{ github.event.inputs.lxc_enable }}
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC容器支持选项，可自主启用内核级容器运行能力
+            - 新增LXC容器支持选项，优化补丁应用逻辑（避免文件冲突）
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

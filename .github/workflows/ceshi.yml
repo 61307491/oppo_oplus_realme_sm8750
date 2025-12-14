@@ -367,130 +367,114 @@ jobs:
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           fi
       
-      # 新增：应用 LXC 补丁（独立步骤，依赖用户启用选项）
-      - name: 应用 LXC 容器支持补丁
-        if: inputs.lxc_enable
-        run: |
-          echo "========================================"
-          echo "         开始应用 LXC 支持补丁          "
-          echo "========================================"
-          cd kernel_workspace
-          # 进入内核源码根目录（已在初始化步骤完成克隆，路径为 common）
-          if [ ! -d "common/kernel/cgroup" ]; then
-              echo "错误：内核源码目录缺失 kernel/cgroup 目录，LXC 补丁应用失败"
-              exit 1
-          fi
-          cd common
-          
-          # 安装 LXC 补丁依赖工具（dos2unix 用于修复格式）
-          echo "→ 安装补丁处理依赖工具..."
-          sudo apt-get update -qq >/dev/null
-          sudo apt-get install -y dos2unix wget -qq >/dev/null
-          
-          # 清理旧文件，避免冲突
-          echo "→ 清理旧补丁文件..."
-          rm -f lxc.patch build.patch cgroup.patch
-          
-          # 下载原始补丁（直接从 raw 地址获取，避免格式损坏）
-          echo "→ 下载 LXC 补丁..."
-          wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/lxc.patch -O lxc.patch
-          if [ ! -f "lxc.patch" ] || [ ! -s "lxc.patch" ]; then
-              echo "错误：LXC 补丁下载失败（文件不存在或为空）"
-              exit 1
-          fi
-          
-          # 修复补丁格式（关键步骤，解决 corrupt patch 问题）
-          echo "→ 修复补丁格式..."
-          dos2unix lxc.patch 2>/dev/null  # 转换 Windows 换行符
-          sed -i '/^$/d' lxc.patch       # 删除多余空行
-          sed -i 's/\r//g' lxc.patch     # 删除回车符
-          sed -i 's/^diff --git a\//diff --git /g' lxc.patch  # 修复路径格式
-          
-          # 强制应用补丁（自动应答覆盖已存在文件）
-          echo "→ 强制应用 LXC 补丁..."
-          if echo -e "y\ny" | patch -p1 -F 5 --force < lxc.patch; then
-              echo "→ 完整 LXC 补丁应用成功！"
-          else
-              echo "→ 完整 LXC 补丁应用失败，尝试分段提取应用..."
-              
-              # 提取并应用 build.config.gki 补丁块
-              sed -n '/^diff --git build.config.gki/,/^diff --git/p' lxc.patch | head -n -4 > build.patch
-              if [ -s build.patch ]; then
-                  echo "→ 应用 build.config.gki 补丁块..."
-                  echo "y" | patch -p1 -F 3 --force < build.patch 2>/dev/null
-                  rm -f build.patch
-              else
-                  echo "→ 未提取到 build.config.gki 补丁块，手动创建配置..."
-                  cat > build.config.gki <<EOF
-          DEFCONFIG=gki_defconfig
-          POST_DEFCONFIG_CMDS="update_config"
-          function update_config() {
-              \${KERNEL_DIR}/scripts/config --file \${OUT_DIR}/.config \
-                   -e CONFIG_POSIX_MQUEUE \
-                   -e CONFIG_CGROUP_DEVICE \
-                   -e CONFIG_SYSVIPC \
-                   -e CONFIG_IPC_NS \
-                   -e CONFIG_PID_NS \
-                   -e CONFIG_USER_NS \
-                   -e CONFIG_BTRFS_FS \
-                   -e CONFIG_BTRFS_FS_POSIX_ACL \
-                   -e CONFIG_TMPFS_XATTR \
-                   -e CONFIG_CGROUP_SCHED \
-                   -e CONFIG_CGROUP_PIDS \
-                   -e CONFIG_CGROUP_MEM_RES_CTLR \
-                   -e CONFIG_CGROUP_MEM_RES_CTLR_SWAP \
-                   -e CONFIG_CGROUP_PERF \
-                   -e CONFIG_CGROUP_NET_PRIO \
-                   -e CONFIG_CGROUP_NET_CLASSID
-              (cd \${OUT_DIR} && \
-               make \${TOOL_ARGS} O=\${OUT_DIR} olddefconfig)
-          }
-          EOF
-              fi
-              
-              # 提取并应用 kernel/cgroup/cgroup.c 补丁块
-              sed -n '/^diff --git kernel\/cgroup\/cgroup.c/,/^diff --git/p' lxc.patch | head -n -4 > cgroup.patch
-              if [ -s cgroup.patch ]; then
-                  echo "→ 应用 kernel/cgroup/cgroup.c 补丁块..."
-                  echo "y" | patch -p1 -F 3 --force < cgroup.patch 2>/dev/null
-                  rm -f cgroup.patch
-              else
-                  echo "→ 未提取到 cgroup.c 补丁块，尝试下载完整文件..."
-                  wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/kernel/cgroup/cgroup.c -O kernel/cgroup/cgroup.c 2>/dev/null
-                  if [ ! -f "kernel/cgroup/cgroup.c" ]; then
-                      echo "警告：cgroup.c 备份文件下载失败，将使用默认版本"
-                  fi
-              fi
-          fi
-          
-          # 验证核心文件并补充关键配置（双重保障）
-          echo "→ 验证并补充 LXC 必需配置..."
-          if [ -f "build.config.gki" ] && [ -f "kernel/cgroup/cgroup.c" ]; then
-              echo "→ LXC 核心文件验证通过！"
-          else
-              echo "警告：LXC 部分核心文件缺失，手动补充配置..."
-          fi
-          
-          # 强制添加 LXC 必需配置（避免补丁遗漏，与内核原有配置合并）
-          cat >> arch/arm64/configs/gki_defconfig <<EOF
-          # LXC 容器支持必需配置
-          CONFIG_CGROUP_DEVICE=y
-          CONFIG_CGROUP_FREEZER=y
-          CONFIG_CGROUP_PIDS=y
-          CONFIG_POSIX_MQUEUE=y
-          CONFIG_SYSVIPC=y
-          CONFIG_IPC_NS=y
-          CONFIG_PID_NS=y
-          CONFIG_USER_NS=y
-          EOF
-          
-          # 清理临时文件
-          echo "→ 清理 LXC 补丁临时文件..."
-          rm -f lxc.patch
-          
-          echo "========================================"
-          echo "         LXC 补丁应用流程完成          "
-          echo "========================================"
+      # 新增：应用 LXC 容器支持补丁（修复文件冲突）
+- name: 应用 LXC 容器支持补丁
+  if: inputs.lxc_enable
+  run: |
+    echo "========================================"
+    echo "         开始应用 LXC 支持补丁          "
+    echo "========================================"
+    cd kernel_workspace
+    # 进入内核源码根目录（已在初始化步骤完成克隆，路径为 common）
+    if [ ! -d "common/kernel/cgroup" ]; then
+        echo "错误：内核源码目录缺失 kernel/cgroup 目录，LXC 补丁应用失败"
+        exit 1
+    fi
+    cd common
+    
+    # 安装 LXC 补丁依赖工具（dos2unix 用于修复格式）
+    echo "→ 安装补丁处理依赖工具..."
+    sudo apt-get update -qq >/dev/null
+    sudo apt-get install -y dos2unix wget -qq >/dev/null
+    
+    # 清理旧文件，避免冲突
+    echo "→ 清理旧补丁文件..."
+    rm -f lxc.patch build.patch cgroup.patch
+    
+    # 下载原始补丁（直接从 raw 地址获取，避免格式损坏）
+    echo "→ 下载 LXC 补丁..."
+    wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/lxc.patch -O lxc.patch
+    if [ ! -f "lxc.patch" ] || [ ! -s "lxc.patch" ]; then
+        echo "错误：LXC 补丁下载失败（文件不存在或为空）"
+        exit 1
+    fi
+    
+    # 修复补丁格式（关键步骤，解决 corrupt patch 问题）
+    echo "→ 修复补丁格式..."
+    dos2unix lxc.patch 2>/dev/null  # 转换 Windows 换行符
+    sed -i '/^$/d' lxc.patch       # 删除多余空行
+    sed -i 's/\r//g' lxc.patch     # 删除回车符
+    sed -i 's/^diff --git a\//diff --git /g' lxc.patch  # 修复路径格式
+    
+    # 强制应用补丁（自动应答覆盖已存在文件）
+    echo "→ 强制应用 LXC 补丁..."
+    if echo -e "y\ny" | patch -p1 -F 5 --force < lxc.patch; then
+        echo "→ 完整 LXC 补丁应用成功！"
+    else
+        echo "→ 完整 LXC 补丁应用失败，尝试分段提取应用..."
+        
+        # 修复：不覆盖现有 build.config.gki，仅追加 LXC 必需配置
+        echo "→ 处理 build.config.gki（避免文件冲突，追加配置）..."
+        # 提取补丁中的 update_config 函数逻辑
+        LXC_CONFIG=$(sed -n '/^function update_config() {/,/^}$/p' lxc.patch | sed 's/^[[:space:]]*//')
+        # 检查现有 build.config.gki 是否已包含 LXC 配置
+        if grep -q "CONFIG_POSIX_MQUEUE" build.config.gki; then
+            echo "→ build.config.gki 已包含 LXC 相关配置，跳过追加"
+        else
+            # 追加 LXC 必需的 POST_DEFCONFIG_CMDS 和 update_config 函数
+            cat >> build.config.gki <<EOF
+
+# LXC 容器支持必需配置（追加自 LXC 补丁）
+POST_DEFCONFIG_CMDS="update_config"
+$LXC_CONFIG
+EOF
+            echo "→ 已向 build.config.gki 追加 LXC 配置"
+        fi
+        
+        # 提取并应用 kernel/cgroup/cgroup.c 补丁块
+        sed -n '/^diff --git kernel\/cgroup\/cgroup.c/,/^diff --git/p' lxc.patch | head -n -4 > cgroup.patch
+        if [ -s cgroup.patch ]; then
+            echo "→ 应用 kernel/cgroup/cgroup.c 补丁块..."
+            # 允许补丁部分应用（忽略无关差异）
+            echo "y" | patch -p1 -F 3 --force --ignore-whitespace < cgroup.patch 2>/dev/null
+            rm -f cgroup.patch
+        else
+            echo "→ 未提取到 cgroup.c 补丁块，尝试下载完整文件..."
+            wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/kernel/cgroup/cgroup.c -O kernel/cgroup/cgroup.c 2>/dev/null
+            if [ ! -f "kernel/cgroup/cgroup.c" ]; then
+                echo "警告：cgroup.c 备份文件下载失败，将使用默认版本"
+            fi
+        fi
+    fi
+    
+    # 验证核心文件并补充关键配置（双重保障）
+    echo "→ 验证并补充 LXC 必需配置..."
+    if [ -f "build.config.gki" ] && [ -f "kernel/cgroup/cgroup.c" ]; then
+        echo "→ LXC 核心文件验证通过！"
+    else
+        echo "警告：LXC 部分核心文件缺失，手动补充配置..."
+    fi
+    
+    # 强制添加 LXC 必需配置（避免补丁遗漏，与内核原有配置合并）
+    cat >> arch/arm64/configs/gki_defconfig <<EOF
+# LXC 容器支持必需配置
+CONFIG_CGROUP_DEVICE=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_CGROUP_PIDS=y
+CONFIG_POSIX_MQUEUE=y
+CONFIG_SYSVIPC=y
+CONFIG_IPC_NS=y
+CONFIG_PID_NS=y
+CONFIG_USER_NS=y
+EOF
+    
+    # 清理临时文件
+    echo "→ 清理 LXC 补丁临时文件..."
+    rm -f lxc.patch
+    
+    echo "========================================"
+    echo "         LXC 补丁应用流程完成          "
+    echo "========================================"
 
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable

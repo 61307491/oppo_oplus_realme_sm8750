@@ -121,19 +121,52 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-      # 适配无层级目录压缩包：直接映射裸文件到目标路径
-      - name: 下载并部署核心内核文件（Browser.zip，无层级目录）
+      # 修复核心：下载+3次重试+ZIP有效性校验+裸文件部署
+      - name: 下载并验证核心内核文件（Browser.zip，支持重试+校验）
         run: |
           cd kernel_workspace
-          echo "正在从GitHub下载核心内核文件包Browser.zip..."
-          # 下载失败直接终止，避免后续无效操作
-          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip -o Browser.zip || { echo "❌ Browser.zip 下载失败！"; exit 1; }
+          FILE_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip"
+          MAX_RETRIES=3  # 最大重试3次
+          RETRY_COUNT=0
+          DOWNLOAD_SUCCESS=false
           
-          # 解压（无层级目录，直接解压到临时目录）
+          # 循环下载，直到成功或达到最大重试次数
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "🔄 第 $((RETRY_COUNT + 1)) 次下载 Browser.zip（最大 $MAX_RETRIES 次）..."
+            # 先删除可能损坏的旧文件
+            rm -f Browser.zip
+            
+            # 优先用curl下载（更稳定，支持断点续传），失败则用aria2c备选
+            if curl -L -f -o Browser.zip --retry 2 --retry-delay 3 "$FILE_URL"; then
+              echo "✅ 下载完成，开始校验文件有效性..."
+              # 校验是否为有效ZIP文件
+              if unzip -t Browser.zip > /dev/null 2>&1; then
+                echo "✅ Browser.zip 是有效ZIP文件！"
+                DOWNLOAD_SUCCESS=true
+                break
+              else
+                echo "❌ Browser.zip 无效（不是标准ZIP或文件损坏），准备重试..."
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2  # 延迟2秒重试
+              fi
+            else
+              echo "❌ curl下载失败，尝试用aria2c重试..."
+              aria2c -s16 -x16 -k1M -o Browser.zip "$FILE_URL" || { echo "❌ aria2c下载也失败"; RETRY_COUNT=$((RETRY_COUNT + 1)); sleep 2; }
+            fi
+          done
+          
+          # 下载失败则终止构建
+          if [ "$DOWNLOAD_SUCCESS" = false ]; then
+            echo "❌ 错误：经过 $MAX_RETRIES 次重试，Browser.zip 仍无法正常下载或文件无效！"
+            echo "请检查：1. 下载链接是否正确；2. 原文件是否为标准ZIP格式；3. 文件是否上传完整。"
+            exit 1
+          fi
+          
+          # 解压裸文件并部署
           mkdir -p browser_temp && unzip -q Browser.zip -d browser_temp
           cd browser_temp
           
-          # 定义「裸文件名→内核目标路径」映射（关键适配无目录结构）
+          # 定义「裸文件名→内核目标路径」映射
           declare -A file_map=(
             ["build.config.gki"]="../common/build.config.gki"
             ["params.c"]="../common/fs/overlayfs/params.c"
@@ -147,14 +180,11 @@ jobs:
             ["pid.c"]="../common/kernel/pid.c"
           )
           
-          # 循环复制文件（自动创建目标目录，缺失文件直接报错）
+          # 循环复制（自动创建目录，缺失文件报错）
           for src_file in "${!file_map[@]}"; do
             dest_path="${file_map[$src_file]}"
-            # 检查压缩包内是否存在该文件（必做：避免漏文件）
             if [ -f "$src_file" ]; then
-              # 创建目标目录（如include/linux、kernel/cgroup，不存在则自动创建）
               mkdir -p "$(dirname "$dest_path")"
-              # 强制复制并验证
               if cp -f "$src_file" "$dest_path"; then
                 echo "✅ 成功部署：$src_file → $dest_path"
               else
@@ -170,11 +200,9 @@ jobs:
           # 清理临时文件
           cd .. && rm -rf browser_temp Browser.zip && echo "✅ 10个核心内核文件全部部署完成！"
 
-      # 验证文件是否部署到正确路径
       - name: 验证核心文件路径（确保可被编译系统识别）
         run: |
           cd kernel_workspace/common
-          # 验证所有文件是否已部署到目标路径
           target_files=(
             "build.config.gki"
             "fs/overlayfs/params.c"
@@ -498,7 +526,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_S_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -912,15 +940,11 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 集成10个自定义核心内核文件（无层级目录压缩包），已通过路径验证+编译验证，确保全部纳入镜像
+            - 集成10个自定义核心内核文件（优化下载+校验机制），已通过路径验证+编译验证，确保全部纳入镜像
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；
             3. 若你之前已刷入SukiSU Ultra内核，且SukiSU Ultra管理器已更新至最新版本，可在SukiSU Ultra管理器中直接刷入AnyKernel刷机包并重启；
             4. 刷入无lz4kd补丁版的内核前若刷入过lz4kd补丁版的内核，为避免出错，请先关闭zram模块；
             5. 由于KernelSU上游更新了元模块功能，最新版KSU管理器（包括除KernelSU Next以外的各分支）需要配合元模块(metamodule)才能正常挂载模块。目前的元模块包括[meta overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs), [mountify](https://github.com/backslashxx/mountify), [meta magicmount](https://github.com/7a72/meta-magic_mount/), [meta magicmount rs](https://github.com/Tools-cx-app/meta-magic_mount/), [hybrid mount](https://github.com/YuzakiKokuban/meta-hybrid_mount)等。若你是第一次使用KSU或刚从旧版KSU管理器升级至新版，请先安装一个元模块，这样其他涉及系统挂载的模块才能正常运行。
-            #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher](https://github.com/capntrips/KernelFlasher)等软件备份boot等关键启动分区!※※※
-          draft: false
-          prerelease: false
-          files: |
-            release_zips/AnyKernel3_*.zip
+            #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher]

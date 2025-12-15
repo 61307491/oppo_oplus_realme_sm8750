@@ -101,7 +101,7 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -o common.zip && 
+          aria2c -s16 -x16 -k1M https://42-56-79-197.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766427155&r=PREC87&bzc=2&bzs=313831323434313930333a32393537303539373a3239333838373239313a313831323434313930333a3130&ur=avvgingalmga&urn=1&s=17664271551d929913bf9f43a10d70672e3d20838e&bzp=0&bi=2969359903&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=02dccc5b-ad17-4c7a-a31b-bc172076917a-c4937c&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=946636fe-0768-423f-b39e-f0db42069fa5467c37a4399 -o common.zip && 
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
           rm -rf common.zip &

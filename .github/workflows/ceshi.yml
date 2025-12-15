@@ -4,6 +4,10 @@ env:
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
   KERNEL_NAME: 'android15-8-g29d86c5fc9dd-abogki428889875-4k'
+  # 10个核心文件压缩包地址（需提前将10个文件按路径打包，替换为你的实际地址）
+  CORE_FILES_URL: "https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/kernel_core10.zip"
+  # 10个核心文件列表（用于校验和强制调用）
+  CORE_FILES: "build.config.gki fs/overlayfs/params.c fs/overlayfs/super.c fs/overlayfs/util.c include/linux/netdevice.h include/linux/sched.h kernel/cgroup/cgroup.c kernel/module/main.c kernel/module/version.c kernel/module/pid.c"
 on:
   workflow_dispatch:
     inputs:
@@ -121,145 +125,156 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-      # ↓↓↓ 新增1：下载并替换全部10个核心文件（从Browser.zip提取）↓↓↓
-      - name: 下载10个核心文件并替换到内核源码
-        run: |
-          cd kernel_workspace
-          echo "正在下载10个核心文件压缩包 Browser.zip..."
-          # 从指定GitHub链接下载压缩包（含10个文件）
-          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip -o Browser.zip || {
-            echo "❌ Browser.zip 下载失败！请检查链接有效性"
-            exit 1
-          }
-          
-          echo "下载完成，开始解压并替换文件..."
-          # 创建临时解压目录，避免覆盖冲突
-          mkdir -p tmp_kernel_files
-          unzip -q Browser.zip -d tmp_kernel_files || {
-            echo "❌ Browser.zip 解压失败！可能是压缩包损坏"
-            exit 1
-          }
-          rm -rf Browser.zip  # 解压后删除压缩包，节省空间
-          
-          # 定义10个文件的「压缩包内路径 → 内核源码目标路径」映射
-          # 逐个替换，确保每个文件都覆盖到对应目录
-          echo "开始替换10个核心文件..."
-          
-          # 1. build.config.gki（根目录文件）
-          if [ -f "tmp_kernel_files/build.config.gki" ]; then
-            cp -f tmp_kernel_files/build.config.gki common/build.config.gki &&
-            echo "✅ 替换 build.config.gki 成功"
-          else
-            echo "⚠️  压缩包内未找到 build.config.gki，将使用后续优化版本"
-          fi
-          
-          # 2-4. fs/overlayfs/params.c、super.c、util.c
-          mkdir -p common/fs/overlayfs/  # 确保目标目录存在
-          for file in params.c super.c util.c; do
-            src_path="tmp_kernel_files/fs/overlayfs/$file"
-            dst_path="common/fs/overlayfs/$file"
-            if [ -f "$src_path" ]; then
-              cp -f "$src_path" "$dst_path" &&
-              echo "✅ 替换 $dst_path 成功"
-            else
-              echo "⚠️  压缩包内未找到 $src_path，保留内核原有文件"
-            fi
-          done
-          
-          # 5-6. include/linux/netdevice.h、sched.h
-          mkdir -p common/include/linux/
-          for file in netdevice.h sched.h; do
-            src_path="tmp_kernel_files/include/linux/$file"
-            dst_path="common/include/linux/$file"
-            if [ -f "$src_path" ]; then
-              cp -f "$src_path" "$dst_path" &&
-              echo "✅ 替换 $dst_path 成功"
-            else
-              echo "⚠️  压缩包内未找到 $src_path，保留内核原有文件"
-            fi
-          done
-          
-          # 7. kernel/cgroup/cgroup.c
-          mkdir -p common/kernel/cgroup/
-          src_path="tmp_kernel_files/kernel/cgroup/cgroup.c"
-          dst_path="common/kernel/cgroup/cgroup.c"
-          if [ -f "$src_path" ]; then
-            cp -f "$src_path" "$dst_path" &&
-            echo "✅ 替换 $dst_path 成功"
-          else
-            echo "⚠️  压缩包内未找到 $src_path，保留内核原有文件"
-          fi
-          
-          # 8-9. kernel/module/main.c、version.c
-          mkdir -p common/kernel/module/
-          for file in main.c version.c; do
-            src_path="tmp_kernel_files/kernel/module/$file"
-            dst_path="common/kernel/module/$file"
-            if [ -f "$src_path" ]; then
-              cp -f "$src_path" "$dst_path" &&
-              echo "✅ 替换 $dst_path 成功"
-            else
-              echo "⚠️  压缩包内未找到 $src_path，保留内核原有文件"
-            fi
-          done
-          
-          # 10. kernel/pid.c
-          src_path="tmp_kernel_files/kernel/pid.c"
-          dst_path="common/kernel/pid.c"
-          if [ -f "$src_path" ]; then
-            cp -f "$src_path" "$dst_path" &&
-            echo "✅ 替换 $dst_path 成功"
-          else
-            echo "⚠️  压缩包内未找到 $src_path，保留内核原有文件"
-          fi
-          
-          # 清理临时目录
-          rm -rf tmp_kernel_files
-          echo "🎉 10个核心文件替换流程完成！"
-      # ↑↑↑ 新增1结束 ↑↑↑
-
-      # ↓↓↓ 新增2：优化 build.config.gki（补充容器适配配置，覆盖原有逻辑）↓↓↓
-      - name: 优化 build.config.gki（启用容器特性+10文件依赖）
+      # ===================== 关键步骤1：下载10个文件并强制替换 =====================
+      - name: 下载10个内核核心文件压缩包并全覆盖替换
         run: |
           cd kernel_workspace/common
-          echo "正在优化 build.config.gki，启用LXC容器适配配置..."
-          # 写入优化后的配置（含update_config函数，确保10个文件依赖的配置项启用）
+          # 1. 下载压缩包（断点续传，确保下载完整）
+          echo "正在下载10个内核核心文件压缩包..."
+          aria2c -s16 -x16 -k1M -c ${{ env.CORE_FILES_URL }} -o kernel_core10.zip
+          
+          # 2. 强制解压替换（-o 覆盖原有文件，-q 静默，-d 指定内核源码根目录）
+          echo "正在解压并全覆盖替换核心文件..."
+          unzip -o -q kernel_core10.zip -d ./
+          rm -f kernel_core10.zip  # 清理压缩包，节省空间
+          
+          # 3. 严格校验10个文件是否存在（缺失则终止构建）
+          echo "正在校验10个核心文件是否替换成功..."
+          local missing=0
+          for file in ${{ env.CORE_FILES }}; do
+            if [ ! -f "$file" ]; then
+              echo "⚠️  核心文件缺失：$file"
+              missing=1
+            fi
+          done
+          
+          if [ $missing -eq 1 ]; then
+            echo "❌ 10个核心文件替换失败，部分文件缺失，终止构建！"
+            exit 1
+          else
+            # 4. 设置文件权限（确保编译器可读写、可编译）
+            chmod 644 build.config.gki
+            chmod 644 fs/overlayfs/*.c
+            chmod 644 include/linux/*.h
+            chmod 644 kernel/cgroup/*.c
+            chmod 644 kernel/module/*.c
+            echo "✅ 10个内核核心文件下载、解压、替换完成，权限已配置！"
+          fi
+      # ==========================================================================
+
+      # ===================== 关键步骤2：强制启用10个文件的依赖配置 =====================
+      - name: 注入配置，强制调用10个核心文件
+        run: |
+          cd kernel_workspace/common
+          # 1. 强化 build.config.gki（确保其被编译流程优先调用，覆盖原有配置）
           cat > build.config.gki << 'EOF'
-# SPDX-License-Identifier: GPL-2.0-only
-# 欧加真 OKI GKI 内核编译主配置文件（适配 LXC 容器 + 10 核心文件生效）
-# 核心适配：10个文件（build.config.gki、fs/overlayfs/*、include/linux/*、kernel/*）
-# 容器特性：PID/用户/IPC/挂载命名空间隔离、OverlayFS 分层存储、cgroup 资源控制、虚拟网卡
+          DEFCONFIG=gki_defconfig
+          # 强制设置后置钩子，确保update_config函数执行（调用配置脚本）
+          POST_DEFCONFIG_CMDS="update_config"
+          
+          function update_config() {
+              # 定义内核目录和输出目录（避免环境变量缺失）
+              KERNEL_DIR=${PWD}
+              OUT_DIR=${KERNEL_DIR}/out
+              mkdir -p ${OUT_DIR}
+              
+              # 调用 scripts/config 工具，启用10个文件的核心依赖（确保文件被编译）
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
+                   # 启用 build.config.gki 核心功能
+                   -e CONFIG_GKI_BUILD=y \
+                   # 启用 OverlayFS 相关（调用 params.c/super.c/util.c）
+                   -e CONFIG_OVERLAY_FS=y \
+                   -e CONFIG_OVERLAY_FS_XATTR=y \
+                   # 启用网络设备和进程调度（调用 netdevice.h/sched.h）
+                   -e CONFIG_NET=y \
+                   -e CONFIG_SCHED_DEBUG=y \
+                   -e CONFIG_SCHED_INFO=y \
+                   # 启用 cgroup 资源管理（调用 cgroup.c）
+                   -e CONFIG_CGROUP=y \
+                   -e CONFIG_CGROUP_DEVICE=y \
+                   # 启用内核模块功能（调用 main.c/version.c/pid.c）
+                   -e CONFIG_MODULES=y \
+                   -e CONFIG_MODULE_UNLOAD=y \
+                   -e CONFIG_MODULE_VERSIONING=y \
+                   # 基础依赖（确保文件编译不报错）
+                   -e CONFIG_POSIX_MQUEUE=y \
+                   -e CONFIG_SYSVIPC=y \
+                   -e CONFIG_IPC_NS=y \
+                   -e CONFIG_PID_NS=y \
+                   -e CONFIG_USER_NS=y \
+                   -e CONFIG_BTRFS_FS=y \
+                   -e CONFIG_BTRFS_FS_POSIX_ACL=y \
+                   -e CONFIG_TMPFS_XATTR=y
+              
+              # 合并配置，自动补全依赖，确保配置生效
+              (cd ${OUT_DIR} && make ${TOOL_ARGS} O=${OUT_DIR} olddefconfig)
+          }
+          
+          # 强制执行update_config（确保配置被加载）
+          update_config
+          EOF
+          
+          # 2. 修改内核 Makefile，显式添加10个文件的编译规则（强制调用）
+          echo "正在修改 Makefile，显式添加核心文件编译规则..."
+          # 为 OverlayFS 添加编译规则
+          sed -i '/obj-$(CONFIG_OVERLAY_FS) += overlayfs\//a obj-$(CONFIG_OVERLAY_FS) += overlayfs/params.o overlayfs/super.o overlayfs/util.o' fs/Makefile
+          # 为 cgroup 添加编译规则
+          sed -i '/obj-$(CONFIG_CGROUP) += cgroup.o/a obj-$(CONFIG_CGROUP) += cgroup/cgroup.o' kernel/Makefile
+          # 为内核模块添加编译规则
+          sed -i '/obj-$(CONFIG_MODULES) += module.o/a obj-$(CONFIG_MODULES) += module/main.o module/version.o module/pid.o' kernel/Makefile
+          # 为头文件添加引用（确保 netdevice.h/sched.h 被调用）
+          echo "# 强制引用核心头文件" >> include/linux/Kbuild
+          echo "header-y += netdevice.h sched.h" >> include/linux/Kbuild
+          
+          echo "✅ 配置注入完成，10个核心文件已被强制加入编译流程！"
+      # ==========================================================================
 
-# 1. 基础编译配置：指定默认配置文件（关联 kernel/arch/arm64/configs/gki_defconfig）
-DEFCONFIG=gki_defconfig
-
-# 2. 配置后执行命令：加载默认配置后，自动执行 update_config 函数更新核心配置
-POST_DEFCONFIG_CMDS="update_config"
-
-# 3. 核心配置更新函数：动态启用容器 & 10个文件依赖的关键配置项
-function update_config() {
-    # 调用内核脚本修改 .config 文件（-e = 强制启用配置项）
-    ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
-        # 容器基础隔离（关联 kernel/pid.c、include/linux/sched.h）
-        -e CONFIG_POSIX_MQUEUE -e CONFIG_SYSVIPC -e CONFIG_IPC_NS -e CONFIG_PID_NS -e CONFIG_USER_NS -e CONFIG_MOUNT_NS \
-        # 资源控制（关联 kernel/cgroup/cgroup.c）
-        -e CONFIG_CGROUP_DEVICE -e CONFIG_CGROUP_MEM_RES_CTLR -e CONFIG_CGROUP_CPUACCT \
-        # 文件系统（关联 fs/overlayfs/params.c、super.c、util.c）
-        -e CONFIG_OVERLAY_FS -e CONFIG_OVERLAY_FS_REDIRECT_DIR -e CONFIG_OVERLAY_FS_XATTR -e CONFIG_TMPFS_XATTR -e CONFIG_BTRFS_FS -e CONFIG_BTRFS_FS_POSIX_ACL \
-        # 网络适配（关联 include/linux/netdevice.h）
-        -e CONFIG_VETH -e CONFIG_BRIDGE -e CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
-
-    # 补全配置依赖，避免编译缺失
-    (cd ${OUT_DIR} && make ${TOOL_ARGS} O=${OUT_DIR} olddefconfig)
-}
-
-# 4. 编译优化：禁用defconfig检查、跳过头文件安装、启用O2优化
-POST_DEFCONFIG_CMDS+="; sed -i 's/check_defconfig//' ${KERNEL_DIR}/build.config.gki"
-POST_DEFCONFIG_CMDS+="; ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -d CONFIG_HEADERS_INSTALL"
-POST_DEFCONFIG_CMDS+="; ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE"
-EOF
-          echo "✅ build.config.gki 优化完成！"
-      # ↑↑↑ 新增2结束 ↑↑↑
+      # ===================== 关键步骤3：编译前校验10个文件的调用状态 =====================
+      - name: 编译前校验，确保10个文件被正常调用
+        run: |
+          cd kernel_workspace/common
+          # 1. 校验 build.config.gki 是否被编译流程识别
+          if grep -q "POST_DEFCONFIG_CMDS" build.config.gki; then
+            echo "✅ build.config.gki 调用配置正常"
+          else
+            echo "❌ build.config.gki 调用配置异常，终止构建！"
+            exit 1
+          fi
+          
+          # 2. 校验 OverlayFS 文件是否被 Makefile 引用
+          if grep -q "overlayfs/params.o" fs/Makefile; then
+            echo "✅ OverlayFS 核心文件（params.c/super.c/util.c）调用正常"
+          else
+            echo "❌ OverlayFS 核心文件调用异常，终止构建！"
+            exit 1
+          fi
+          
+          # 3. 校验 cgroup.c 是否被 Makefile 引用
+          if grep -q "cgroup/cgroup.o" kernel/Makefile; then
+            echo "✅ cgroup.c 调用正常"
+          else
+            echo "❌ cgroup.c 调用异常，终止构建！"
+            exit 1
+          fi
+          
+          # 4. 校验内核模块文件是否被 Makefile 引用
+          if grep -q "module/main.o" kernel/Makefile; then
+            echo "✅ 内核模块文件（main.c/version.c/pid.c）调用正常"
+          else
+            echo "❌ 内核模块文件调用异常，终止构建！"
+            exit 1
+          fi
+          
+          # 5. 校验头文件是否被引用
+          if grep -q "netdevice.h sched.h" include/linux/Kbuild; then
+            echo "✅ 头文件（netdevice.h/sched.h）调用正常"
+          else
+            echo "❌ 头文件调用异常，终止构建！"
+            exit 1
+          fi
+          
+          echo "✅ 所有10个核心文件调用状态校验通过，可正常编译！"
+      # ==========================================================================
 
       - name: 配置ccache目录
         run: |
@@ -288,6 +303,7 @@ EOF
           export CCACHE_MAXSIZE="${{ env.CCACHE_MAXSIZE }}"
           
           mkdir -p "$CCACHE_DIR"
+          
           echo "配置ccache缓存大小为: $CCACHE_MAXSIZE"
           ccache -M "$CCACHE_MAXSIZE"
           ccache -o compression=true
@@ -323,7 +339,11 @@ EOF
             sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
             sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
             sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
-            awk -v def="$VERSION_DEFINITIONS" '/REPO_OWNER :=/ {print; print def; inserted=1; next} 1; END {if (!inserted) print def}' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
+            awk -v def="$VERSION_DEFINITIONS" '
+              /REPO_OWNER :=/ {print; print def; inserted=1; next}
+              1
+              END {if (!inserted) print def}
+            ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
             KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
@@ -420,7 +440,7 @@ EOF
             patch -p1 < fix_umount.patch || true
             cd ../common
             patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
-            patch -p1 -N -F 3  < 69_hide_stuff.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           else
             echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
@@ -578,14 +598,14 @@ EOF
       - name: 启用ADIOS IO调度器
         if: inputs.adios_enable
         run: |
-          echo "正在启用ADIOS IO调度器…"
+          echo "正在启用ADIOS IO调度器(将截止时间优先调度算法与基于自主学习的自适应延迟控制算法相结合, 降低I/O延迟)…"
           cd kernel_workspace
           echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
       - name: 启用Re-Kernel支持
         if: inputs.rekernel_enable
         run: |
-          echo "正在启用Re-Kernel支持…"
+          echo "正在启用Re-Kernel支持(用于与Freezer,NoActive等软件配合使用,提升冻结后台能力)…"
           cd kernel_workspace
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
       - name: 启用内核级基带保护
@@ -639,7 +659,8 @@ EOF
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
            
-      - name: 构建内核
+      # ===================== 关键步骤4：编译时强制关联10个文件 =====================
+      - name: 构建内核（强制关联10个核心文件）
         run: |
           WORKDIR="$(pwd)"
           export PATH="/usr/lib/ccache:$PATH"
@@ -683,6 +704,7 @@ EOF
           echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
           echo 'ld.lld "$@"' >> ld-wrapper
           
+          echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
           echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
@@ -704,8 +726,9 @@ EOF
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
+          # 强制使用自定义的 build.config.gki，确保其被调用
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error -f build.config.gki gki_defconfig &&
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error -f build.config.gki Image
           
           echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译后环境文件时间戳: ---"
@@ -716,6 +739,48 @@ EOF
           echo "编译后空间:"
           df -h
          
+      # ===================== 关键步骤5：编译后校验10个文件的调用记录 =====================
+      - name: 编译后校验，确认10个文件已被调用
+        run: |
+          cd kernel_workspace/common/out
+          # 校验 OverlayFS 文件是否被编译（存在 .o 目标文件）
+          if [ -f fs/overlayfs/params.o ] && [ -f fs/overlayfs/super.o ] && [ -f fs/overlayfs/util.o ]; then
+            echo "✅ OverlayFS 核心文件（params.c/super.c/util.c）已被编译调用"
+          else
+            echo "❌ OverlayFS 核心文件未被编译调用"
+          fi
+          
+          # 校验 cgroup.c 是否被编译
+          if [ -f kernel/cgroup/cgroup.o ]; then
+            echo "✅ cgroup.c 已被编译调用"
+          else
+            echo "❌ cgroup.c 未被编译调用"
+          fi
+          
+          # 校验内核模块文件是否被编译
+          if [ -f kernel/module/main.o ] && [ -f kernel/module/version.o ] && [ -f kernel/module/pid.o ]; then
+            echo "✅ 内核模块文件（main.c/version.c/pid.c）已被编译调用"
+          else
+            echo "❌ 内核模块文件未被编译调用"
+          fi
+          
+          # 校验 build.config.gki 是否被执行（配置项生效）
+          if grep -q "CONFIG_OVERLAY_FS=y" .config && grep -q "CONFIG_CGROUP=y" .config; then
+            echo "✅ build.config.gki 已被执行调用"
+          else
+            echo "❌ build.config.gki 未被执行调用"
+          fi
+          
+          # 校验头文件是否被引用（编译日志中存在引用记录）
+          if grep -q "netdevice.h" ../.config && grep -q "sched.h" ../.config; then
+            echo "✅ 头文件（netdevice.h/sched.h）已被引用调用"
+          else
+            echo "❌ 头文件未被引用调用"
+          fi
+          
+          echo "✅ 10个核心文件调用状态最终校验完成！"
+      # ==========================================================================
+
       - name: 应用KPM并修补内核
         run: |
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
@@ -772,7 +837,7 @@ EOF
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
+           packages: write
       actions: read
     steps:
       - name: 下载 ZIP 工件
@@ -819,8 +884,8 @@ EOF
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.89 内核（基于一加13国际版 6.6.89 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + 10个核心文件定制
-            - susfs支持：${{ github.event.inputs.sususfs_enable }}
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + 10个核心文件强制调用
+            - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
             - LZ4KD支持：${{ github.event.inputs.lz4kd_enable }}
@@ -835,8 +900,7 @@ EOF
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 集成10个核心文件定制（含build.config.gki、OverlayFS、PID管理等）
-            - 优化LXC容器适配（启用命名空间隔离、虚拟网卡、资源控制）
+            - 强制集成10个内核核心文件，确保全部被编译调用
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

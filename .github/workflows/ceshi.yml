@@ -172,9 +172,8 @@ jobs:
             echo "ccache缓存命中详情:"
             ccache -sv
           fi
-
       # 新增步骤：下载并解压Browser1.zip替换目标文件（仅新增，不改动其他）
-      - name: 下载并解压Browser1.zip替换目标文件
+      - name: 下载下载并解压Browser1.zip替换目标文件
         run: |
           cd kernel_workspace
           # 1. 下载Browser1.zip压缩包（补充?raw=true获取原始文件，避免下载失败）
@@ -190,7 +189,6 @@ jobs:
           # 5. 清理临时文件，节省磁盘空间
           rm -rf Browser1.zip tmp_browser_unzip &&
           echo "Browser1.zip下载、解压及目标文件替换完成！"
-
       - name: 添加KernelSU
         id: ksu_version
         run: |
@@ -453,6 +451,44 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
+
+      # 新增：LXC容器运行必要配置（核心新增步骤）
+      - name: 启用LXC容器运行必要配置
+        run: |
+          cd kernel_workspace
+          # LXC核心依赖：命名空间支持（容器隔离基础）
+          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # LXC核心依赖：控制组支持（资源限制基础）
+          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_FREEZER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_SCHED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CPUSETS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # LXC网络依赖：桥接、NAT、网络过滤（容器联网基础）
+          echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BRIDGE_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_STATE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # LXC存储与设备依赖：挂载、设备文件、文件系统权限
+          echo "CONFIG_DEVPTS_MULTIPLE_INSTANCES=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_EXT4_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_EXT4_FS_SECURITY=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig  # 重复确保启用，兼容原配置
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig  # 重复确保启用，兼容原配置
+          # LXC安全与兼容性依赖
+          echo "CONFIG_SECURITY_SELINUX=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器安全标签支持
+          echo "CONFIG_SECURITY_SELINUX_DISABLE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 兼容非SELinux环境
+          echo "CONFIG_KEYS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器密钥管理支持
+          echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器虚拟网卡支持
+          echo "CONFIG_MACVLAN=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器网卡虚拟化扩展
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
@@ -778,7 +814,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.66 内核（基于一加13 6.6.66 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC容器支持
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -788,12 +824,14 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
+            - LXC容器支持：已启用（核心命名空间、控制组、网络桥接等依赖全量配置）
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
+            - 新增LXC容器运行必要内核配置，支持容器隔离、资源限制及网络联网
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

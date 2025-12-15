@@ -121,40 +121,61 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-      - name: 下载并部署核心内核文件（Browser.zip）
+      # 适配无层级目录压缩包：直接映射裸文件到目标路径
+      - name: 下载并部署核心内核文件（Browser.zip，无层级目录）
         run: |
           cd kernel_workspace
           echo "正在从GitHub下载核心内核文件包Browser.zip..."
-          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip -o Browser.zip &&
-          mkdir -p browser_temp &&
-          unzip -q Browser.zip -d browser_temp &&
+          # 下载失败直接终止，避免后续无效操作
+          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip -o Browser.zip || { echo "❌ Browser.zip 下载失败！"; exit 1; }
+          
+          # 解压（无层级目录，直接解压到临时目录）
+          mkdir -p browser_temp && unzip -q Browser.zip -d browser_temp
           cd browser_temp
           
-          # 按原始路径部署10个核心文件
-          cp -f build.config.gki ../common/build.config.gki || echo "build.config.gki 部署完成"
-          mkdir -p ../common/fs/overlayfs &&
-          cp -f fs/overlayfs/params.c ../common/fs/overlayfs/params.c &&
-          cp -f fs/overlayfs/super.c ../common/fs/overlayfs/super.c &&
-          cp -f fs/overlayfs/util.c ../common/fs/overlayfs/util.c || echo "OverlayFS文件部署完成"
-          mkdir -p ../common/include/linux &&
-          cp -f include/linux/netdevice.h ../common/include/linux/netdevice.h &&
-          cp -f include/linux/sched.h ../common/include/linux/sched.h || echo "头文件部署完成"
-          mkdir -p ../common/kernel/cgroup &&
-          cp -f kernel/cgroup/cgroup.c ../common/kernel/cgroup/cgroup.c || echo "Cgroup文件部署完成"
-          mkdir -p ../common/kernel/module &&
-          cp -f kernel/module/main.c ../common/kernel/module/main.c &&
-          cp -f kernel/module/version.c ../common/kernel/module/version.c || echo "模块文件部署完成"
-          cp -f kernel/pid.c ../common/kernel/pid.c || echo "PID管理文件部署完成"
+          # 定义「裸文件名→内核目标路径」映射（关键适配无目录结构）
+          declare -A file_map=(
+            ["build.config.gki"]="../common/build.config.gki"
+            ["params.c"]="../common/fs/overlayfs/params.c"
+            ["super.c"]="../common/fs/overlayfs/super.c"
+            ["util.c"]="../common/fs/overlayfs/util.c"
+            ["netdevice.h"]="../common/include/linux/netdevice.h"
+            ["sched.h"]="../common/include/linux/sched.h"
+            ["cgroup.c"]="../common/kernel/cgroup/cgroup.c"
+            ["main.c"]="../common/kernel/module/main.c"
+            ["version.c"]="../common/kernel/module/version.c"
+            ["pid.c"]="../common/kernel/pid.c"
+          )
+          
+          # 循环复制文件（自动创建目标目录，缺失文件直接报错）
+          for src_file in "${!file_map[@]}"; do
+            dest_path="${file_map[$src_file]}"
+            # 检查压缩包内是否存在该文件（必做：避免漏文件）
+            if [ -f "$src_file" ]; then
+              # 创建目标目录（如include/linux、kernel/cgroup，不存在则自动创建）
+              mkdir -p "$(dirname "$dest_path")"
+              # 强制复制并验证
+              if cp -f "$src_file" "$dest_path"; then
+                echo "✅ 成功部署：$src_file → $dest_path"
+              else
+                echo "❌ 复制失败：$src_file → $dest_path"
+                exit 1
+              fi
+            else
+              echo "❌ 错误：压缩包内缺失必需文件 $src_file！"
+              exit 1
+            fi
+          done
           
           # 清理临时文件
-          cd .. && rm -rf browser_temp Browser.zip &&
-          echo "10个核心内核文件部署完成！"
+          cd .. && rm -rf browser_temp Browser.zip && echo "✅ 10个核心内核文件全部部署完成！"
 
+      # 验证文件是否部署到正确路径
       - name: 验证核心文件路径（确保可被编译系统识别）
         run: |
           cd kernel_workspace/common
-          # 定义10个文件的目标路径
-          files=(
+          # 验证所有文件是否已部署到目标路径
+          target_files=(
             "build.config.gki"
             "fs/overlayfs/params.c"
             "fs/overlayfs/super.c"
@@ -167,17 +188,17 @@ jobs:
             "kernel/pid.c"
           )
           
-          # 循环检查每个文件是否存在，缺失则终止构建
-          for file in "${files[@]}"; do
+          for file in "${target_files[@]}"; do
             if [ -f "$file" ]; then
-              echo "✅ 文件存在：$file"
+              echo "✅ 验证通过：目标路径存在 $file"
             else
-              echo "❌ 错误：文件不存在 $file，编译将失败！"
+              echo "❌ 验证失败：目标路径缺失 $file（部署步骤出错）"
               exit 1
             fi
           done
-          echo "所有核心文件路径验证通过，可正常被编译系统调用！"
+          echo "✅ 所有核心文件路径验证通过，可正常参与编译！"
 
+      # 配置Makefile（确保10个文件被强制编译）
       - name: 配置Makefile（确保10个文件被强制编译）
         run: |
           cd kernel_workspace/common
@@ -477,7 +498,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_S_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -598,7 +619,7 @@ jobs:
         run: |
           echo "正在启用ADIOS IO调度器(将截止时间优先调度算法与基于自主学习的自适应延迟控制算法相结合, 降低I/O延迟)…"
           cd kernel_workspace
-          echo "CONFIG_MQ_IOSCHED_AD_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
 
       - name: 启用Re-Kernel支持
@@ -760,7 +781,7 @@ jobs:
               exit 1
             fi
           done
-          echo "所有核心文件编译验证通过，已全部纳入最终内核镜像！"
+          echo "✅ 所有核心文件编译验证通过，已全部纳入最终内核镜像！"
           
           echo "内核编译完成！"
           echo "ccache状态："
@@ -891,7 +912,7 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 集成10个自定义核心内核文件，已确保全部编译纳入镜像
+            - 集成10个自定义核心内核文件（无层级目录压缩包），已通过路径验证+编译验证，确保全部纳入镜像
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

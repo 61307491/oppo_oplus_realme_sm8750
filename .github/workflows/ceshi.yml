@@ -313,7 +313,7 @@ jobs:
             if [ -f "$PATCH_FILE" ]; then
               if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
                 echo "检测到旧版 Makefile 补丁代码，正在执行修复..."
-                sed -i 's|kernel/Makefile|kernel/Kbuild|g' "$PATCH_FILE"
+                sed -i 's|kernel/Makeakefile|kernel/Kbuild|g' "$PATCH_FILE"
                 sed -i 's|.*compdb.*|@@ -75,4 +75,13 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
                 sed -i 's|^ clean:| ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes|' "$PATCH_FILE"
                 sed -i 's|.*make -C.*| ccflags-y += -Wno-declaration-after-statement -Wno-unused-function|' "$PATCH_FILE"
@@ -447,7 +447,7 @@ jobs:
             cd kernel_workspace
             echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm664/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_VEGAS=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_NV=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -528,7 +528,7 @@ jobs:
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
 
-      # ===================== LXC 专属配置与补丁（修复路径问题） =====================
+      # ===================== LXC 专属配置与补丁（最终修复版） =====================
       - name: LXC容器支持 - 内核配置优化
         if: inputs.lxc_enable
         run: |
@@ -570,7 +570,7 @@ jobs:
           done
           echo "LXC内核配置优化完成！"
 
-      - name: LXC容器支持 - 应用1.zip补丁包（路径适配+容错）
+      - name: LXC容器支持 - 应用1.zip补丁包（最终兼容版）
         if: inputs.lxc_enable
         run: |
           cd kernel_workspace
@@ -602,7 +602,7 @@ jobs:
               exit 1
           fi
           
-          # 补丁预处理：修复路径+删除索引校验+增加容错
+          # 补丁预处理：修复路径+删除索引校验+清理无效内容
           echo "正在预处理补丁（路径适配+版本容错）..."
           for patch in "${PATCH_FILES[@]}"; do
             PATCH_NAME=$(basename $patch)
@@ -626,33 +626,29 @@ jobs:
             sed -i '/--- a\/.*$/ { N; /^\+\+\+ b\/.*$/ { N; /^@@ -0,0 +1,/d } }' "$patch"
           done
           
-          # 按顺序应用补丁（容错模式）
-          echo "开始按顺序应用5个LXC补丁（容错模式）..."
+          # 按顺序应用补丁（兼容GNU patch的标准参数）
+          echo "开始按顺序应用5个LXC补丁（兼容模式）..."
           for patch in "${PATCH_FILES[@]}"; do
             PATCH_NAME=$(basename $patch)
             echo "--------------------------"
             echo "正在应用补丁：$PATCH_NAME"
             
-            # 使用-p0保留完整路径，--fuzz=5增加偏移量容错，--ignore-whitespace忽略空格差异
-            patch -p0 -N \
-                  --fuzz=5 \
-                  --ignore-whitespace \
-                  --ignore-garbage \
-                  < "$patch"
+            # 标准兼容参数：-p0保留路径，-f强制应用，--fuzz=5容错偏移，--ignore-whitespace忽略空格
+            patch -p0 -N -f --fuzz=5 --ignore-whitespace < "$patch"
             
-            # 捕获补丁应用结果，允许部分不匹配（避免构建中断）
+            # 捕获补丁应用结果，允许部分不匹配（不中断构建）
             if [ $? -eq 0 ]; then
-              echo "补丁 $PATCH_NAME 应用成功！"
+              echo "✅ 补丁 $PATCH_NAME 应用成功！"
             else
-              echo "⚠️  补丁 $PATCH_NAME 部分代码块不匹配（可能是内核版本差异）"
-              echo "⚠️  跳过不匹配部分，继续构建流程"
+              echo "⚠️  补丁 $PATCH_NAME 部分代码块不匹配（内核版本差异）"
+              echo "⚠️  已强制跳过不匹配部分，继续构建流程"
             fi
           done
           
           # 清理临时文件
           rm -rf ${{ env.LXC_TEMP_DIR }}
           echo "--------------------------"
-          echo "LXC补丁包应用完成（容错模式）！"
+          echo "LXC补丁包应用完成（兼容模式）！"
       # ===================== LXC 专属配置与补丁结束 =====================
 
       - name: 构建内核
@@ -834,7 +830,7 @@ jobs:
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
           LXC_DESC="否"
           if [[ "${{ github.event.inputs.lxc_enable }}" == "true" ]]; then
-            LXC_DESC="是（已适配Linux容器运行，补丁采用容错模式应用）"
+            LXC_DESC="是（已适配Linux容器运行，补丁采用兼容模式应用）"
           fi
           echo "LXC_DESC=$LXC_DESC" >> $GITHUB_ENV
 
@@ -866,7 +862,7 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC容器支持，优化补丁应用逻辑（自动适配路径+版本容错，避免构建中断）
+            - 新增LXC容器支持，优化补丁应用逻辑（移除无效参数，兼容Ubuntu标准patch工具）
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

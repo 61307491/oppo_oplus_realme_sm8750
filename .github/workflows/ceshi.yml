@@ -183,7 +183,7 @@ jobs:
                 tr -d '[:space:]')
               [ -n "$KSU_API_VERSION" ] && break || sleep 1
             done
-            [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="3.1.7"
+            [ -z "$KSU_API_VERSION" ] && KSU_API_VERSION="4.1.0"
             echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
             VERSION_DEFINITIONS=$'define get_ksu_version_full\nv\\$1-'"$GIT_COMMIT_HASH"$'@cctv18\nendef\n\nKSU_VERSION_API := '"$KSU_API_VERSION"$'\nKSU_VERSION_FULL := v'"$KSU_API_VERSION"$'-'"$GIT_COMMIT_HASH"$'@cctv18'
             sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
@@ -194,7 +194,7 @@ jobs:
               1
               END {if (!inserted) print def}
             ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
-            KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
+            KSU_VERSION=40241
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             grep -A10 "REPO_OWNER" kernel/Kbuild
@@ -352,88 +352,146 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
           
-      # -------------------------- 关键修改1：强制替换目标10个文件 --------------------------
-      - name: 下载Browser.zip并强制替换核心文件（含目标10个文件）
+      # -------------------------- 关键修复1：多源下载+路径搜索+单文件兜底 --------------------------
+      - name: 强制获取目标10个文件（多源下载+兜底）
         run: |
           cd kernel_workspace
-          DOWNLOAD_URL="https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/Browser.zip"
-          echo "正在通过 Raw 链接下载Browser.zip补丁包..."
+          mkdir -p browser_patches
+          # 定义3个备用下载源（避免单一源失效）
+          download_sources=(
+            "https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/Browser.zip"
+            "https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/main/Browser.zip"
+            "https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/main/Browser.zip"
+          )
           
-          # 3次重试确保下载成功（强制获取文件）
-          for i in {1..3}; do
-            aria2c -s16 -x16 -k1M "$DOWNLOAD_URL" -o browser_patches.zip && break
-            echo "第$i次下载失败，重试中..."
-            sleep 2
+          # 循环尝试备用源，直到下载成功
+          for src in "${download_sources[@]}"; do
+            echo "尝试从源 $src 下载..."
+            aria2c -s16 -x16 -k1M "$src" -o browser_patches.zip && break
+            echo "该源下载失败，尝试下一个..."
+            sleep 1
           done
           
-          # 强制校验ZIP有效性，无效则直接退出（避免替换错误文件）
+          # 校验ZIP包，失败则直接用单文件兜底
           if ! file browser_patches.zip | grep -q "Zip archive data"; then
-            echo "错误：下载的文件不是有效 ZIP 包，无法替换目标文件！"
-            cat browser_patches.zip
-            exit 1
+            echo "ZIP包无效，启用单文件兜底下载..."
+            rm -f browser_patches.zip
+            # 直接从可靠仓库下载每个目标文件（兜底方案）
+            target_files=(
+              "fs/overlayfs/params.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/params.c"
+              "fs/overlayfs/super.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/super.c"
+              "fs/overlayfs/util.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/util.c"
+              "include/linux/netdevice.h::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/include/linux/netdevice.h"
+              "include/linux/sched.h::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/include/linux/sched.h"
+              "kernel/cgroup/cgroup.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/kernel/cgroup/cgroup.c"
+              "module/main.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/main.c"
+              "module/version.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/version.c"
+              "module/pid.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/pid.c"
+              "build.config.gki::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/build.config.gki"
+            )
+            # 下载并覆盖目标文件
+            for item in "${target_files[@]}"; do
+              IFS="::" read -r path url <<< "$item"
+              dest="common/$path"
+              mkdir -p "$(dirname "$dest")"
+              wget -O "$dest" "$url" || echo "警告：$path 下载失败，将使用源码默认文件"
+            done
+          else
+            # ZIP包有效，解压后搜索文件位置（解决路径不一致问题）
+            unzip -q browser_patches.zip -d browser_patches
+            echo "搜索并复制目标文件..."
+            target_files=(
+              "fs/overlayfs/params.c"
+              "fs/overlayfs/super.c"
+              "fs/overlayfs/util.c"
+              "include/linux/netdevice.h"
+              "include/linux/sched.h"
+              "kernel/cgroup/cgroup.c"
+              "module/main.c"
+              "module/version.c"
+              "module/pid.c"
+              "build.config.gki"
+            )
+            # 逐个搜索文件并复制
+            for file in "${target_files[@]}"; do
+              # 搜索ZIP解压目录中的文件（忽略路径前缀）
+              found_path=$(find browser_patches -name "$(basename "$file")" -type f | head -n1)
+              if [ -n "$found_path" ]; then
+                dest="common/$file"
+                mkdir -p "$(dirname "$dest")"
+                cp -f "$found_path" "$dest"
+                echo "成功复制 $found_path -> $dest"
+              else
+                echo "ZIP中未找到 $file，启用单文件兜底..."
+                # 兜底下载该文件
+                base_url="https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/$file"
+                dest="common/$file""
+                mkdir -p "$(dirname "$dest")"
+                wget -O "$dest" "$base_url"
+              fi
+            done
           fi
-          echo "ZIP 包校验通过"
-          
-          mkdir -p browser_patches
-          unzip -q browser_patches.zip -d browser_patches || {
-            echo "解压失败！请检查 ZIP 包完整性"
-            exit 1
-          }
-          echo "Browser.zip解压完成"
-          
-          # 强制替换10个目标文件（cp -f 强制覆盖，忽略不存在警告）
-          echo "开始强制替换核心文件..."
-          cp -f browser_patches/fs/overlayfs/* common/fs/overlayfs/ 2>/dev/null || true
-          cp -f browser_patches/include/linux/netdevice.h common/include/linux/ 2>/dev/null || true
-          cp -f browser_patches/include/linux/sched.h common/include/linux/ 2>/dev/null || true
-          cp -f browser_patches/kernel/cgroup/cgroup.c common/kernel/cgroup/ 2>/dev/null || true
-          cp -f browser_patches/module/main.c common/module/ 2>/dev/null || true
-          cp -f browser_patches/module/version.c common/module/ 2>/dev/null || true
-          cp -f browser_patches/module/pid.c common/module/ 2>/dev/null || true  # 补全缺失文件
-          cp -f browser_patches/build.config.gki common/ 2>/dev/null || true     # 强制替换配置文件
-          echo "所有10个目标文件强制替换完成"
-          
+          echo "所有目标文件获取完成"
           rm -rf browser_patches.zip browser_patches
       
-      # -------------------------- 关键修改2：编译前强制校验文件存在性 --------------------------
-      - name: 强制校验目标文件（缺失则终止编译）
+      # -------------------------- 关键修复2：逐文件校验+缺失重试 --------------------------
+      - name: 强制校验目标文件（缺失则重试下载）
         run: |
           cd kernel_workspace/common
-          # 定义10个目标文件路径（确保无遗漏）
+          # 定义目标文件及兜底URL
           target_files=(
-            "build.config.gki"
-            "fs/overlayfs/params.c"
-            "fs/overlayfs/super.c"
-            "fs/overlayfs/util.c"
-            "include/linux/netdevice.h"
-            "include/linux/sched.h"
-            "kernel/cgroup/cgroup.c"
-            "module/main.c"
-            "module/version.c"
-            "module/pid.c"
+            "fs/overlayfs/params.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/params.c"
+            "fs/overlayfs/super.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/super.c"
+            "fs/overlayfs/util.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/fs/overlayfs/util.c"
+            "include/linux/netdevice.h::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/include/linux/netdevice.h"
+            "include/linux/sched.h::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/include/linux/sched.h"
+            "kernel/cgroup/cgroup.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/kernel/cgroup/cgroup.c"
+            "module/main.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/main.c"
+            "module/version.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/version.c"
+            "module/pid.c::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/module/pid.c"
+            "build.config.gki::https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89/build.config.gki"
           )
-          # 强制校验，缺失任何一个文件直接退出编译
-          for file in "${target_files[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "错误：目标文件 $file 缺失，无法强制加载编译！"
-              exit 1
+          # 逐文件校验，缺失则重试下载
+          for item in "${target_files[@]}"; do
+            IFS="::" read -r path url <<< "$item"
+            if [ ! -f "$path" ]; then
+              echo "警告：$path 缺失，重试下载..."
+              mkdir -p "$(dirname "$path")"
+              # 3次重试下载
+              for i in {1..3}; do
+                wget -O "$path" "$url" && break
+                echo "第$i次下载失败，重试..."
+                sleep 1
+              done
+              # 最终校验，仍缺失则报错（确保不跳过）
+              if [ ! -f "$path" ]; then
+                echo "错误：$path 多次下载失败，无法继续！"
+                exit 1
+              fi
             fi
           done
-          echo "所有10个目标文件均存在，可强制加载编译"
+          echo "所有10个目标文件均存在，可正常编译"
       
-      # -------------------------- 关键修改3：强制配置build.config.gki（禁用干扰项） --------------------------
-      - name: 强制配置build.config.gki（确保加载生效）
+      # -------------------------- 关键修复3：强制配置build.config.gki（确保加载） --------------------------
+      - name: 强制配置build.config.gki（禁用干扰项+明确编译规则）
         run: |
           cd kernel_workspace/common
-          # 1. 强制禁用defconfig检查（避免配置被忽略）
+          # 禁用defconfig检查
           sed -i 's/check_defconfig//g' ./build.config.gki
-          # 2. 强制添加编译规则（确保文件被纳入编译）
-          echo "### 强制加载目标文件编译规则 ###" >> ./build.config.gki
-          echo "TARGET_FILES := fs/overlayfs/params.c fs/overlayfs/super.c fs/overlayfs/util.c \\" >> ./build.config.gki
-          echo "include/linux/netdevice.h include/linux/sched.h kernel/cgroup/cgroup.c \\" >> ./build.config.gki
-          echo "module/main.c module/version.c module/pid.c" >> ./build.config.gki
-          echo "obj-y += \$(TARGET_FILES:.c=.o)" >> ./build.config.gki  # 强制将.c文件编译为.o目标文件
-          echo "build.config.gki强制配置完成，确保目标文件被加载"
+          # 明确添加目标文件编译规则（避免遗漏）
+          cat >> ./build.config.gki << EOF
+          ### 强制加载目标文件编译规则 ###
+          obj-y += fs/overlayfs/params.o
+          obj-y += fs/overlayfs/super.o
+          obj-y += fs/overlayfs/util.o
+          obj-y += include/linux/netdevice.o
+          obj-y += include/linux/sched.o
+          obj-y += kernel/cgroup/cgroup.o
+          obj-y += module/main.o
+          obj-y += module/version.o
+          obj-y += module/pid.o
+          EOF
+          echo "build.config.gki配置完成"
       
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
@@ -591,8 +649,7 @@ jobs:
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
            
-      # -------------------------- 关键修改4：编译时强制加载build.config.gki --------------------------
-      - name: 构建内核（强制加载build.config.gki及目标文件）
+      - name: 构建内核（强制加载build.config.gki）
         run: |
           WORKDIR="$(pwd)"
           export PATH="/usr/lib/ccache:$PATH"
@@ -661,7 +718,7 @@ jobs:
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
           
-          # 强制加载build.config.gki：通过--include指定配置文件，确保优先加载
+          # 强制加载build.config.gki
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error --include ./build.config.gki gki_defconfig &&
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error --include ./build.config.gki Image
           
@@ -693,7 +750,7 @@ jobs:
           rm -rf ./AnyKernel3/.git
           cd AnyKernel3
           cp ../common/out/arch/arm64/boot/Image ./Image
-          if [[ [[ ! -f ./Image ]]; then
+          if [[ ! -f ./Image ]]; then
             echo "未找到内核镜像文件，构建可能出错"
             exit 1
           fi
@@ -793,7 +850,7 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 强制加载目标10个文件及build.config.gki，确保编译生效
+            - 优化目标文件获取逻辑：多备用源+路径搜索+单文件兜底，解决module/main.c缺失问题
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

@@ -4,6 +4,11 @@ env:
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
   KERNEL_NAME: 'android15-8-g29d86c5fc9dd-abogki428889875-4k'
+  # LXC 补丁压缩包地址（GitHub 直链）
+  LXC_PATCH_ZIP_URL: "https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/1.zip"
+  # LXC 临时工作目录
+  LXC_TEMP_DIR: "$GITHUB_WORKSPACE/kernel_workspace/lxc_temp"
+
 on:
   workflow_dispatch:
     inputs:
@@ -83,10 +88,11 @@ on:
         type: string
         default: ''
       lxc_enable:
-        description: '是否启用LXC容器支持(需依赖内核6.6版本，启用后增加容器运行能力)'
+        description: '是否启用LXC容器支持(需额外配置内核及应用补丁，适配Linux容器运行)'
         required: true
         type: boolean
         default: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -104,7 +110,7 @@ jobs:
           sudo apt purge man-db &&
           sudo rm -rf /var/lib/man-db/auto-update &&
           sudo apt update &&
-          sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
+          sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache wget unzip &
           
           echo "正在克隆源码仓库..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_15.0.2_oneplus_13_6.6.66.zip -o common.zip && 
@@ -131,6 +137,7 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
+
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.66" >> $GITHUB_ENV
@@ -138,6 +145,7 @@ jobs:
           echo "当前磁盘空间："
           df -h
           echo "当前构建内核版本：6.6.66"
+
       - name: 载入当前版本内核的 ccache缓存
         uses: actions/cache@v4
         id: ccache-restore
@@ -158,6 +166,7 @@ jobs:
           export CCACHE_MAXSIZE="${{ env.CCACHE_MAXSIZE }}"
           
           mkdir -p "$CCACHE_DIR"
+          
           echo "配置ccache缓存大小为: $CCACHE_MAXSIZE"
           ccache -M "$CCACHE_MAXSIZE"
           ccache -o compression=true
@@ -169,6 +178,7 @@ jobs:
             echo "ccache缓存命中详情:"
             ccache -sv
           fi
+
       - name: 添加KernelSU
         id: ksu_version
         run: |
@@ -232,6 +242,7 @@ jobs:
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
           fi
+
       - name: 应用 KernelSU & SUSFS 补丁
         if: inputs.susfs_enable
         run: |
@@ -305,7 +316,7 @@ jobs:
               if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
                 echo "检测到旧版 Makefile 补丁代码，正在执行修复..."
                 sed -i 's|kernel/Makefile|kernel/Kbuild|g' "$PATCH_FILE"
-                sed -i 's|.*compdb.*|@@ -75,4 +75,113 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
+                sed -i 's|.*compdb.*|@@ -75,4 +75,13 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
                 sed -i 's|^ clean:| ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes|' "$PATCH_FILE"
                 sed -i 's|.*make -C.*| ccflags-y += -Wno-declaration-after-statement -Wno-unused-function|' "$PATCH_FILE"
                 echo "补丁修复完成！"
@@ -328,103 +339,6 @@ jobs:
             patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           fi
-      
-      # 修复冲突后的 LXC 补丁应用步骤
-      - name: 应用 LXC 容器支持补丁
-        if: inputs.lxc_enable
-        run: |
-          echo "========================================"
-          echo "         开始应用 LXC 支持补丁          "
-          echo "========================================"
-          cd kernel_workspace
-          if [ ! -d "common/kernel/cgroup" ]; then
-              echo "错误：内核源码目录缺失 kernel/cgroup 目录，LXC 补丁应用失败"
-              exit 1
-          fi
-          cd common
-          
-          echo "→ 安装补丁处理依赖工具..."
-          sudo apt-get update -qq >/dev/null
-          sudo apt-get install -y dos2unix wget -qq >/dev/null
-          
-          echo "→ 清理旧补丁文件..."
-          rm -f lxc.patch build.patch cgroup.patch
-          
-          echo "→ 下载 LXC 补丁..."
-          wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/lxc.patch -O lxc.patch
-          if [ ! -f "lxc.patch" ] || [ ! -s "lxc.patch" ]; then
-              echo "错误：LXC 补丁下载失败（文件不存在或为空）"
-              exit 1
-          fi
-          
-          echo "→ 修复补丁格式..."
-          dos2unix lxc.patch 2>/dev/null
-          sed -i '/^$/d' lxc.patch
-          sed -i 's/\r//g' lxc.patch
-          sed -i 's/^diff --git a\//diff --git /g' lxc.patch
-          
-          echo "→ 强制应用 LXC 补丁..."
-          if echo -e "y\ny" | patch -p1 -F 5 --force < lxc.patch; then
-              echo "→ 完整 LXC 补丁应用成功！"
-          else
-              echo "→ 完整 LXC 补丁应用失败，尝试分段提取应用..."
-              
-              # 核心修复：追加配置而非覆盖 build.config.gki
-              echo "→ 处理 build.config.gki（避免文件冲突，追加配置）..."
-              LXC_CONFIG=$(sed -n '/^function update_config() {/,/^}$/p' lxc.patch | sed 's/^[[:space:]]*//')
-              if grep -q "CONFIG_POSIX_MQUEUE" build.config.gki; then
-                  echo "→ build.config.gki 已包含 LXC 相关配置，跳过追加"
-              else
-                  cat >> build.config.gki <<EOF
-
-# LXC 容器支持必需配置（追加自 LXC 补丁）
-POST_DEFCONFIG_CMDS="update_config"
-$LXC_CONFIG
-EOF
-                  echo "→ 已向 build.config.gki 追加 LXC 配置"
-              fi
-              
-              # 提取并应用 cgroup.c 补丁块（忽略空格差异）
-              sed -n '/^diff --git kernel\/cgroup\/cgroup.c/,/^diff --git/p' lxc.patch | head -n -4 > cgroup.patch
-              if [ -s cgroup.patch ]; then
-                  echo "→ 应用 kernel/cgroup/cgroup.c 补丁块..."
-                  echo "y" | patch -p1 -F 3 --force --ignore-whitespace < cgroup.patch 2>/dev/null
-                  rm -f cgroup.patch
-              else
-                  echo "→ 未提取到 cgroup.c 补丁块，尝试下载完整文件..."
-                  wget -q https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/kernel/cgroup/cgroup.c -O kernel/cgroup/cgroup.c 2>/dev/null
-                  if [ ! -f "kernel/cgroup/cgroup.c" ]; then
-                      echo "警告：cgroup.c 备份文件下载失败，将使用默认版本"
-                  fi
-              fi
-          fi
-          
-          echo "→ 验证并补充 LXC 必需配置..."
-          if [ -f "build.config.gki" ] && [ -f "kernel/cgroup/cgroup.c" ]; then
-              echo "→ LXC 核心文件验证通过！"
-          else
-              echo "警告：LXC 部分核心文件缺失，手动补充配置..."
-          fi
-          
-          # 追加 LXC 必需配置到 defconfig
-          cat >> arch/arm64/configs/gki_defconfig <<EOF
-# LXC 容器支持必需配置
-CONFIG_CGROUP_DEVICE=y
-CONFIG_CGROUP_FREEZER=y
-CONFIG_CGROUP_PIDS=y
-CONFIG_POSIX_MQUEUE=y
-CONFIG_SYSVIPC=y
-CONFIG_IPC_NS=y
-CONFIG_PID_NS=y
-CONFIG_USER_NS=y
-EOF
-          
-          echo "→ 清理 LXC 补丁临时文件..."
-          rm -f lxc.patch
-          
-          echo "========================================"
-          echo "         LXC 补丁应用流程完成          "
-          echo "========================================"
 
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
@@ -438,6 +352,7 @@ EOF
           cd ./common
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
+
       - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
@@ -452,7 +367,7 @@ EOF
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
-          
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -472,7 +387,7 @@ EOF
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
+
       - name: 添加 KSU & 其他配置项
         run: |
           cd kernel_workspace
@@ -495,7 +410,7 @@ EOF
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -526,6 +441,7 @@ EOF
           cd common
           wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
           patch -p1 -F 3 < config.patch || true
+
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
           if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
@@ -546,6 +462,7 @@ EOF
               echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./common/arch/arm64/configs/gki_defconfig
             fi
           fi
+
       - name: 启用ADIOS IO调度器
         if: inputs.adios_enable
         run: |
@@ -553,12 +470,14 @@ EOF
           cd kernel_workspace
           echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用Re-Kernel支持
         if: inputs.rekernel_enable
         run: |
           echo "正在启用Re-Kernel支持(用于与Freezer,NoActive等软件配合使用,提升冻结后台能力)…"
           cd kernel_workspace
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
         run: |
@@ -590,6 +509,7 @@ EOF
           sed -i 's/selinuxfs.o //g' "./selinux/Makefile"
           sed -i 's/hooks.o //g' "./selinux/Makefile"
           cat "./baseband-guard/sepatch.txt" >> "./selinux/Makefile"
+
       - name: 添加制作名称
         run: |
           cd kernel_workspace
@@ -609,7 +529,95 @@ EOF
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
-           
+
+      # ===================== LXC 专属配置与补丁 =====================
+      - name: LXC容器支持 - 内核配置优化
+        if: inputs.lxc_enable
+        run: |
+          cd kernel_workspace
+          echo "--------------------------"
+          echo "开始配置LXC容器必需内核参数..."
+          # 定义LXC核心配置（去重整合）
+          LXC_CONFIGS=(
+          "CONFIG_SYSVIPC=y"
+          "CONFIG_POSIX_MQUEUE=y"
+          "CONFIG_CGROUP_DEVICE=y"
+          "CONFIG_CGROUP_FREEZER=y"
+          "CONFIG_USER_NS=y"
+          "CONFIG_UTS_NS=y"
+          "CONFIG_PID_NS=y"
+          "CONFIG_IPC_NS=y"
+          "CONFIG_NET_NS=y"
+          "CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y"
+          "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+          "CONFIG_IP6_NF_NAT=y"
+          "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+          "CONFIG_RFKILL=y"
+          "CONFIG_DEVTMPFS=y"
+          "CONFIG_NULL_TTY=y"
+          "CONFIG_LTO_CLANG_THIN=y"
+          )
+          # 定义需要删除的配置
+          DEL_CONFIGS=(
+          "CONFIG_PID_NS is not set"
+          "CONFIG_LTO_CLANG_FULL=y"
+          "CONFIG_MODULE_SCMVERSION=y"
+          "CONFIG_VT is not set"
+          )
+          # 批量删除不需要的配置
+          for del in "${DEL_CONFIGS[@]}"; do
+              sed -i "/^$del/d" ./common/arch/arm64/configs/gki_defconfig
+          done
+          # 批量添加/覆盖LXC配置
+          for cfg in "${LXC_CONFIGS[@]}"; do
+              KEY=$(echo $cfg | awk -F'=' '{print $1}')
+              sed -i "/^$KEY=/d" ./common/arch/arm64/configs/gki_defconfig
+              echo $cfg >> ./common/arch/arm64/configs/gki_defconfig
+          done
+          echo "LXC内核配置优化完成！"
+
+      - name: LXC容器支持 - 应用1.zip补丁包
+        if: inputs.lxc_enable
+        run: |
+          cd kernel_workspace
+          echo "--------------------------"
+          echo "开始下载并应用LXC补丁压缩包：1.zip"
+          # 创建临时目录
+          mkdir -p ${{ env.LXC_TEMP_DIR }}
+          # 下载补丁包
+          wget -O "${{ env.LXC_TEMP_DIR }}/1.zip" "${{ env.LXC_PATCH_ZIP_URL }}" --no-check-certificate
+          if [ $? -ne 0 ]; then
+              echo "错误：1.zip 下载失败，请检查GitHub链接是否有效"
+              exit 1
+          fi
+          # 解压补丁包
+          unzip -o "${{ env.LXC_TEMP_DIR }}/1.zip" -d "${{ env.LXC_TEMP_DIR }}"
+          # 查找1~5.patch并排序
+          PATCH_FILES=($(find "${{ env.LXC_TEMP_DIR }}" -name "[1-5].patch" | sort))
+          if [ ${#PATCH_FILES[@]} -ne 5 ]; then
+              echo "错误：解压后未找到5个补丁文件（1.patch~5.patch），请检查压缩包内容"
+              exit 1
+          fi
+          # 批量应用补丁
+          echo "开始按顺序应用5个LXC补丁..."
+          for patch in "${PATCH_FILES[@]}"; do
+              PATCH_NAME=$(basename $patch)
+              echo "正在应用补丁：$PATCH_NAME"
+              if [ -d "$(pwd)/.git" ]; then
+                  git apply --stat "$patch"
+                  git apply --check "$patch"
+                  git apply "$patch"
+              else
+                  patch -p1 -N --dry-run < "$patch"
+                  patch -p1 -N < "$patch"
+              fi
+              echo "补丁 $PATCH_NAME 应用成功！"
+          done
+          # 清理临时文件
+          rm -rf ${{ env.LXC_TEMP_DIR }}
+          echo "LXC补丁包应用完成！"
+      # ===================== LXC 专属配置与补丁结束 =====================
+
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
@@ -643,13 +651,11 @@ EOF
           echo "FAKETIME=$FAKETIME" >> $GITHUB_ENV
           SO_DIR=$(pwd)
           export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
-          
           echo '#!/bin/bash' > cc-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
           echo 'ccache clang "$@"' >> cc-wrapper
-          
           echo '#!/bin/bash' > ld-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
@@ -668,7 +674,7 @@ EOF
           ./test-wrapper.sh date
           echo "--- [Wrapper Test] 正在测试 (stat) 命令 ---"
           ./test-wrapper.sh stat ./Makefile
-          echo "--- [Wrapper Test]  测试完毕 ---"
+          echo "--- [Wrapper Test] 测试完毕 ---"
           chmod +x cc-wrapper ld-wrapper
           echo "--- 编译前环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译前环境文件时间戳: ---"
@@ -689,7 +695,7 @@ EOF
           ccache -s
           echo "编译后空间:"
           df -h
-         
+
       - name: 应用KPM并修补内核
         run: |
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
@@ -701,7 +707,7 @@ EOF
             rm -f Image
             mv oImage Image
           fi
-          
+
       - name: 克隆 AnyKernel3 并打包
         run: |
           cd kernel_workspace
@@ -722,25 +728,33 @@ EOF
           else
             KSU_TYPENAME="KSU"
           fi
+          # 增加LXC标识到文件名
+          LXC_FLAG=""
+          if [[ "${{ github.event.inputs.lxc_enable }}" == "true" ]]; then
+            LXC_FLAG="_LXC"
+          fi
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
             wget https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/refs/heads/main/zram.zip
           fi
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
-            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}.zip ./*
+            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ github.event.inputs.kernel_suffix }}${LXC_FLAG}.zip ./*
           else
-            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}.zip ./*
+            zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}${LXC_FLAG}.zip ./*
           fi
+
       - name: 上传 Ccache 调试日志
         if: always() && inputs.ccache_debug
         uses: actions/upload-artifact@v4
         with:
           name: ccache-debug-log
           path: ${{ github.workspace }}/kernel_workspace/ccache.log
+
       - name: 上传 ZIP 工件
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
           path: ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -754,6 +768,7 @@ EOF
         with:
           name: Kernel_ZIP_Artifacts
           path: ./release_zips
+
       - name: 设置环境变量
         run: |
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
@@ -781,7 +796,13 @@ EOF
             KSU_TYPENAME="KSU"
           fi
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
-         
+          # LXC支持标识
+          LXC_DESC="否"
+          if [[ "${{ github.event.inputs.lxc_enable }}" == "true" ]]; then
+            LXC_DESC="是（已适配Linux容器运行）"
+          fi
+          echo "LXC_DESC=$LXC_DESC" >> $GITHUB_ENV
+
       - name: 创建发布
         id: create_release
         uses: softprops/action-gh-release@v1
@@ -803,14 +824,14 @@ EOF
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - LXC容器支持：${{ github.event.inputs.lxc_enable }}
+            - LXC容器支持：${{ env.LXC_DESC }}
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC容器支持选项，优化补丁应用逻辑（避免文件冲突）
+            - 新增LXC容器支持（需手动开启构建选项），适配Linux容器硬件加速运行
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

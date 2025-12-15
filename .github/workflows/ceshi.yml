@@ -98,9 +98,9 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://codeload.github.com/RealmeOS/realme_GT7pro-AndroidB-common-source/zip/refs/heads/master -o common.zip && 
+          aria2c -s16 -x16 -k1M https://42-56-79-196.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-800/5eb530a2/1812441903-0/5eb530a260b99f3cf55bf71aca980320/c-m103?v=5&t=1766425164&r=256GG9&bzc=2&bzs=313831323434313930333a32393537303539363a3332303839363037333a313831323434313930333a3130&ur=avvgingalmga&urn=1&s=1766425164a620af6276693fd4ca8e474fbfc05e1c&bzp=0&bi=2969359903&filename=android_kernel_common_oneplus_sm8750-14.zip&x-mf-biz-cid=ac31d907-0474-46e1-8b15-47ec4fab0d87-c4937c&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=24b8f16e-8536-498d-9863-5dc1b567c43e477c37a4399 -o common.zip && 
           unzip -q common.zip && 
-          mv "realme_GT7pro-AndroidB-common-source-master" common &&
+          mv "android_kernel_common_oneplus_sm8750-14-1" common &&
           rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&

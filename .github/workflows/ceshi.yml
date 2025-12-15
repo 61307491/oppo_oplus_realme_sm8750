@@ -1,9 +1,11 @@
-name: 加速版构建 6.6.89 欧加真1OKI内核
+name: 加速版构建 6.6.89 欧加真OKI内核
+
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
   KERNEL_NAME: 'android15-8-g29d86c5fc9dd-abogki428889875-4k'
+
 on:
   workflow_dispatch:
     inputs:
@@ -76,6 +78,7 @@ on:
         required: false
         type: string
         default: ''
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -98,7 +101,7 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          wget -c -t 3 -T 60 --no-check-certificate https://42-56-79-197.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766427155&r=PREC87&bzc=2&bzs=313831323434313930333a32393537303539373a3239333838373239313a313831323434313930333a3130&ur=avvgingalmga&urn=1&s=17664271551d929913bf9f43a10d70672e3d20838e&bzp=0&bi=2969359903&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=02dccc5b-ad17-4c7a-a31b-bc172076917a-c4937c&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=946636fe-0768-423f-b39e-f0db42069fa5467c37a4399 -o common.zip && 
+          aria2c -s16 -x16 -k1M https://42-56-79-197.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766427155&r=PREC87&bzc=2&bzs=313831323434313930333a32393537303539373a3239333838373239313a313831323434313930333a3130&ur=avvgingalmga&urn=1&s=17664271551d929913bf9f43a10d70672e3d20838e&bzp=0&bi=2969359903&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=02dccc5b-ad17-4c7a-a31b-bc172076917a-c4937c&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=946636fe-0768-423f-b39e-f0db42069fa5467c37a4399 -o common.zip && 
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
           rm -rf common.zip &
@@ -122,6 +125,7 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
+
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.89" >> $GITHUB_ENV
@@ -129,6 +133,7 @@ jobs:
           echo "当前磁盘空间："
           df -h
           echo "当前构建内核版本：6.6.89"
+
       - name: 载入当前版本内核的 ccache缓存
         uses: actions/cache@v4
         id: ccache-restore
@@ -166,6 +171,7 @@ jobs:
             echo "ccache缓存命中详情:"
             ccache -sv
           fi
+
       - name: 添加KernelSU
         id: ksu_version
         run: |
@@ -216,11 +222,13 @@ jobs:
               # 如果未找到插入点，在文件末尾追加
               END {if (!inserted) print def}
             ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
+
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
             KSU_VERSION=$(expr $(git rev-list --count main) + 37185 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+
             # 验证修改结果
             grep -A10 "REPO_OWNER" kernel/Kbuild  # 检查插入点后的内容
             grep "KSU_VERSION_FULL" kernel/Kbuild # 确认版本定义存在
@@ -254,6 +262,7 @@ jobs:
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
           fi
+
       - name: 应用 KernelSU & SUSFS 补丁
         if: inputs.susfs_enable
         run: |
@@ -367,6 +376,7 @@ jobs:
           cd ./common
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
+
       - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
@@ -402,56 +412,10 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
           
-      - name: 添加 KSU & 其他配置项（含LXC完整依赖）
+      - name: 添加 KSU & 其他配置项
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # 一、用户原有基础配置（LXC核心依赖）
-          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 容器存储挂载核心
-          echo "CONFIG_NET_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网络设备基础框架
-          echo "CONFIG_SCHED_CORE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程调度隔离
-          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig  # 资源限制核心
-          echo "CONFIG_MODULES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 加载容器所需内核模块
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # PID命名空间隔离（容器独立PID）
-          
-          # 二、LXC必需补充配置（缺失则容器无法启动/网络异常）
-          # 1. 完整命名空间支持（容器隔离核心）
-          echo "CONFIG_UTS_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 主机名/域名隔离
-          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程间通信隔离
-          echo "CONFIG_NET_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网络命名空间（独立网卡/路由）
-          echo "CONFIG_MNT_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 挂载命名空间（独立文件系统）
-          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 用户命名空间（容器内root映射）
-          
-          # 2. 容器网络支持（桥接/虚拟网卡）
-          echo "CONFIG_BRIDGE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 网桥（容器联网核心）
-          echo "CONFIG_VETH=y" >> ./common/arch/arm64/configs/gki_defconfig  # 虚拟网卡（容器与主机通信）
-          echo "CONFIG_MACVLAN=y" >> ./common/arch/arm64/configs/gki_defconfig  # MACVLAN（容器独立MAC地址）
-          echo "CONFIG_TUN=y" >> ./common/arch/arm64/configs/gki_defconfig  # TUN/TAP（VPN/端口转发）
-          echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig  # MAC地址过滤
-          
-          # 3. 存储与文件系统支持
-          echo "CONFIG_TMPFS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 临时文件系统（容器运行时存储）
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig  # TMPFS权限控制
-          echo "CONFIG_EXT4_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # EXT4文件系统（容器镜像常用）
-          echo "CONFIG_EXT4_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig  # EXT4权限控制
-          echo "CONFIG_LOOP=y" >> ./common/arch/arm64/configs/gki_defconfig  # 循环设备（挂载镜像文件）
-          
-          # 4. 安全与权限支持
-          echo "CONFIG_CGROUP_CPUACCT=y" >> ./common/arch/arm64/configs/gki_defconfig  # CPU资源限制
-          echo "CONFIG_CGROUP_MEMCG=y" >> ./common/arch/arm64/configs/gki_defconfig  # 内存资源限制
-          echo "CONFIG_CGROUP_PIDS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 进程数限制
-          echo "CONFIG_CGROUP_DEVICES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 设备访问控制
-          echo "CONFIG_CAPABILITIES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 权限分离（容器内降权）
-          echo "CONFIG_SECCOMP=y" >> ./common/arch/arm64/configs/gki_defconfig  # 系统调用过滤（安全隔离）
-          echo "CONFIG_SECCOMP_FILTER=y" >> ./common/arch/arm64/configs/gki_defconfig  # 自定义seccomp规则
-          
-          # 5. 其他辅助依赖
-          echo "CONFIG_UNIX_DIAG=y" >> ./common/arch/arm64/configs/gki_defconfig  # Unix域套接字诊断
-          echo "CONFIG_INET_DIAG=y" >> ./common/arch/arm64/configs/gki_defconfig  # TCP/UDP诊断
-          echo "CONFIG_NETFILTER=y" >> ./common/arch/arm64/configs/gki_defconfig  # 防火墙支持（容器端口映射）
-          echo "CONFIG_NETFILTER_XTABLES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 扩展防火墙规则
-          
-          # 原有逻辑保持不变
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
@@ -510,6 +474,7 @@ jobs:
           cd common
           wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
           patch -p1 -F 3 < config.patch || true
+
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
           if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
@@ -549,6 +514,7 @@ jobs:
               echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./common/arch/arm64/configs/gki_defconfig
             fi
           fi
+
       - name: 启用ADIOS IO调度器
         if: inputs.adios_enable
         run: |
@@ -556,12 +522,14 @@ jobs:
           cd kernel_workspace
           echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用Re-Kernel支持
         if: inputs.rekernel_enable
         run: |
           echo "正在启用Re-Kernel支持(用于与Freezer,NoActive等软件配合使用,提升冻结后台能力)…"
           cd kernel_workspace
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
         run: |
@@ -593,6 +561,7 @@ jobs:
           sed -i 's/selinuxfs.o //g' "./selinux/Makefile"
           sed -i 's/hooks.o //g' "./selinux/Makefile"
           cat "./baseband-guard/sepatch.txt" >> "./selinux/Makefile"
+
       - name: 添加制作名称
         run: |
           cd kernel_workspace
@@ -736,17 +705,20 @@ jobs:
           else
             zip -r ../AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_A15_${{ env.KERNEL_NAME }}.zip ./*
           fi
+
       - name: 上传 Ccache 调试日志
         if: always() && inputs.ccache_debug
         uses: actions/upload-artifact@v4
         with:
           name: ccache-debug-log
           path: ${{ github.workspace }}/kernel_workspace/ccache.log
+
       - name: 上传 ZIP 工件
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
           path: ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -754,12 +726,14 @@ jobs:
       contents: write
       packages: write
       actions: read
+
     steps:
       - name: 下载 ZIP 工件
         uses: actions/download-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
           path: ./release_zips
+
       - name: 设置环境变量
         run: |
           if [[ -n "${{ github.event.inputs.kernel_suffix }}" ]]; then
@@ -799,7 +773,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.89 内核（基于一加13国际版 6.6.89 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + **LXC容器完整支持**
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -815,7 +789,6 @@ jobs:
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增LXC容器完整依赖配置（含命名空间、网络、存储、安全隔离）
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

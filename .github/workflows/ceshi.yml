@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 欧加真OKI内核
+name: 加速版构建 6.6.89 欧加真OKI内核（含10文件替换）
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -121,107 +121,88 @@ jobs:
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
 
-          ##############################################################################
-          # 新增：下载解压10个目标文件（压缩包内仅含10个文件，预设结构见下方注释）
-          ##############################################################################
-          echo "=== 开始下载10个目标文件压缩包 ==="
-          # 【核心替换】将下方链接改为你的10个文件压缩包地址（压缩包名建议：target_10_files.zip）
-          TARGET_FILES_URL="https://你的文件存储地址/target_10_files.zip"
-          # 预设压缩包内文件结构（必须严格匹配，否则替换失败）：
-          # ├── build.config.gki
-          # ├── fs/
-          # │   └── overlayfs/  （含该目录下所有需要的子文件，如overlayfs_main.c）
-          # ├── params.c
-          # ├── super.c
-          # ├── util.c
-          # ├── include/
-          # │   └── linux/
-          # │       ├── netdevice.h
-          # │       └── sched.h
-          # ├── kernel/
-          # │   ├── cgroup/
-          # │   │   └── cgroup.c
-          # │   └── pid.c
-          # └── module/
-          #     ├── main.c
-          #     └── version.c
-          aria2c -s16 -x16 -k1M $TARGET_FILES_URL -o target_10_files.zip || { echo "压缩包下载失败！"; exit 1; }
-          unzip -q target_10_files.zip -d target_10_files || { echo "压缩包解压失败！"; exit 1; }
+      # 新增步骤1：下载Browser.zip压缩包并解压（无目录平铺）
+      - name: 下载并解压10个目标文件压缩包
+        run: |
+          cd kernel_workspace
+          echo "正在下载Browser.zip压缩包..."
+          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/Browser.zip -o Browser.zip
+          # 创建临时解压目录，避免文件混乱
+          mkdir -p browser_temp
+          unzip -q Browser.zip -d browser_temp
+          echo "压缩包解压完成，开始校验10个目标文件是否齐全..."
+          # 校验10个文件是否存在（平铺存储）
+          target_files=("build.config.gki" "params.c" "super.c" "util.c" "netdevice.h" "sched.h" "cgroup.c" "main.c" "version.c" "pid.c")
+          for file in "${target_files[@]}"; do
+              if [ -f "browser_temp/$file" ]; then
+                  echo "✅ 解压后存在：$file"
+              else
+                  echo "❌ 解压后缺失：$file，构建终止！"
+                  exit 1
+              fi
+          done
 
-          echo "=== 开始替换/添加10个目标文件 ==="
-          # 1. 替换 build.config.gki（备份原有文件，便于回滚）
-          cp -f common/build.config.gki common/build.config.gki.bak &&
-          cp -f target_10_files/build.config.gki common/build.config.gki &&
-          # 2. 替换 fs/overlayfs 目录（覆盖原有，保留完整结构）
-          rm -rf common/fs/overlayfs &&
-          cp -rf target_10_files/fs/overlayfs common/fs/ &&
-          # 3. 添加 params.c、super.c、util.c 到 fs 目录
-          cp -f target_10_files/params.c common/fs/ &&
-          cp -f target_10_files/super.c common/fs/ &&
-          cp -f target_10_files/util.c common/fs/ &&
-          # 4. 替换 include/linux 下的头文件
-          cp -f target_10_files/include/linux/netdevice.h common/include/linux/ &&
-          cp -f target_10_files/include/linux/sched.h common/include/linux/ &&
-          # 5. 替换 kernel/cgroup/cgroup.c
-          cp -f target_10_files/kernel/cgroup/cgroup.c common/kernel/cgroup/ &&
-          # 6. 添加 pid.c 到 kernel 目录
-          cp -f target_10_files/kernel/pid.c common/kernel/ &&
-          # 7. 替换 module 下的文件
-          cp -f target_10_files/module/main.c common/module/ &&
-          cp -f target_10_files/module/version.c common/module/ &&
-          # 清理临时文件
-          rm -rf target_10_files.zip target_10_files &&
-          echo "=== 10个文件替换/添加完成 ==="
+      # 新增步骤2：替换内核源码中对应文件（按原路径放置，确保编译识别）
+      - name: 替换10个目标文件到内核源码目录
+        run: |
+          cd kernel_workspace
+          # 定义「解压后文件名 → 内核源码目标路径」映射，确保文件放到正确编译目录
+          declare -A file_map=(
+              ["build.config.gki"]="common/build.config.gki"  # 顶层构建配置文件
+              ["params.c"]="common/fs/overlayfs/params.c"    # overlayfs模块文件
+              ["super.c"]="common/fs/overlayfs/super.c"      # overlayfs模块文件
+              ["util.c"]="common/fs/overlayfs/util.c"        # overlayfs模块文件
+              ["netdevice.h"]="common/include/linux/netdevice.h"  # 网络核心头文件
+              ["sched.h"]="common/include/linux/sched.h"      # 调度器核心头文件
+              ["cgroup.c"]="common/kernel/cgroup/cgroup.c"    # cgroup模块文件
+              ["main.c"]="common/module/main.c"               # 模块主文件
+              ["version.c"]="common/module/version.c"         # 版本信息文件
+              ["pid.c"]="common/module/pid.c"                 # 进程ID管理文件
+          )
+          # 遍历映射，创建目标目录（防止目录不存在）并替换文件
+          for src_file in "${!file_map[@]}"; do
+              dest_path="${file_map[$src_file]}"
+              dest_dir=$(dirname "$dest_path")
+              # 创建目标目录（若不存在）
+              mkdir -p "$dest_dir"
+              # 覆盖替换文件，并设置正确权限
+              mv -f "browser_temp/$src_file" "$dest_path"
+              chmod 644 "$dest_path"
+              echo "✅ 已替换：$src_file → $dest_path"
+          done
+          # 清理临时解压目录
+          rm -rf browser_temp Browser.zip
+          echo "10个目标文件替换完成！"
 
-          ##############################################################################
-          # 新增：修改目录Makefile，确保新增文件被编译
-          ##############################################################################
-          echo "=== 配置目录Makefile，加载新增文件 ==="
-          # 1. 修改 common/fs/Makefile，添加 params.o、super.o、util.o 编译规则
-          echo "obj-y += params.o super.o util.o" >> common/fs/Makefile &&
-          # 2. 修改 common/kernel/Makefile，添加 pid.o 编译规则
-          echo "obj-y += pid.o" >> common/kernel/Makefile &&
-          # 3. 确保 fs/overlayfs/Makefile 存在（若压缩包未带，创建基础规则）
-          if [ ! -f common/fs/overlayfs/Makefile ]; then
-            # 替换为 overlayfs 目录下实际的.c文件名（如 overlayfs_main.o），多个用空格分隔
-            echo "obj-y += overlayfs_main.o" > common/fs/overlayfs/Makefile
-          fi &&
-          echo "=== 目录Makefile配置完成 ==="
+      # 新增步骤3：强制标记文件为待编译状态（确保被重新编译，避免缓存跳过）
+      - name: 强制标记10个文件为待编译，避免缓存跳过
+        run: |
+          cd kernel_workspace/common
+          # 定义10个文件的源码路径（与替换路径一致）
+          compile_files=(
+              "build.config.gki"
+              "fs/overlayfs/params.c"
+              "fs/overlayfs/super.c"
+              "fs/overlayfs/util.c"
+              "include/linux/netdevice.h"
+              "include/linux/sched.h"
+              "kernel/cgroup/cgroup.c"
+              "module/main.c"
+              "module/version.c"
+              "module/pid.c"
+          )
+          # 通过修改文件时间戳，强制make识别为更新文件，触发重新编译
+          for file in "${compile_files[@]}"; do
+              touch -m "$file"
+              echo "✅ 已标记待编译：$file"
+          done
+          # 额外确保overlayfs、cgroup、module模块的Makefile依赖更新
+          touch fs/overlayfs/Makefile
+          touch kernel/cgroup/Makefile
+          touch module/Makefile
+          echo "强制编译标记完成，文件将参与本次内核构建！"
 
-          ##############################################################################
-          # 新增：修改 build.config.gki，强制加载所有目标文件编译
-          ##############################################################################
-          echo "=== 配置 build.config.gki，确保10个文件加载编译 ==="
-          # 向 build.config.gki 末尾添加编译配置（覆盖原有冲突规则）
-          cat >> common/build.config.gki << 'EOF'
-# 强制加载10个目标文件编译（基于 common/ 目录路径）
-TARGET_SRC_FILES += \
-    fs/overlayfs/overlayfs_main.o \  # 【需替换】为 overlayfs 下实际的.o文件名
-    fs/params.o \
-    fs/super.o \
-    fs/util.o \
-    kernel/cgroup/cgroup.o \
-    kernel/pid.o \
-    module/main.o \
-    module/version.o
-
-# 禁用编译过滤，强制包含所有目标文件
-BUILD_ALL_SRC := true
-
-# 禁用 defconfig 检查（避免配置冲突）
-ifneq ($(strip $(CHECK_DEFCONFIG)),true)
-    check_defconfig:
-endif
-
-# 确保头文件路径生效
-CCFLAGS += -I$(KERNEL_SRC)/include/linux
-EOF
-          # 替换 overlayfs 下的.o文件名（若有多个，按 "xxx.o yyy.o" 格式添加）
-          OVERLAYFS_OBJ="overlayfs_main.o"  # 【核心替换】改为你 overlayfs 目录下的实际.o文件名
-          sed -i "s/overlayfs_main.o/$OVERLAYFS_OBJ/" common/build.config.gki &&
-          echo "=== build.config.gki 配置完成 ==="
-          ##############################################################################
-
+      # 以下为原脚本后续步骤，保持不变
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.89" >> $GITHUB_ENV
@@ -571,7 +552,7 @@ EOF
 
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
-          if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
+          if [[ "${{ github.event.inputs.bbrbr_enable }}" != "false" ]]; then
             echo "正在添加BBR等拥塞控制算法..."
             cd kernel_workspace
             #开启TCP拥塞控制算法控制器（必需）
@@ -650,7 +631,7 @@ EOF
                   print lines[i]
               }
             }
-          } }
+          }
           ' ./Kconfig > Kconfig.tmp && mv Kconfig.tmp ./Kconfig
           sed -i 's/selinuxfs.o //g' "./selinux/Makefile"
           sed -i 's/hooks.o //g' "./selinux/Makefile"
@@ -726,7 +707,7 @@ EOF
           echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
-          echo 'export FAKESTAT="'$FAKETIME'"' >> test-wrapper.sh
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
           echo 'export FAKETIME="'$FAKETIME'"' >> test-wrapper.sh
           echo 'echo ">>> Wrapper 内部环境检查完毕."' >> test-wrapper.sh
           echo 'exec "$@"' >> test-wrapper.sh # 执行所有传入的参数
@@ -866,7 +847,7 @@ EOF
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.89 内核（基于一加13国际版 6.6.89 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + 10个自定义文件替换
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -881,8 +862,9 @@ EOF
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
-            - 更新${{ env.KERNEL_NAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 集成10个自定义文件，确保编译加载
+            - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
+            - 替换10个自定义文件并强制参与编译
+            - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

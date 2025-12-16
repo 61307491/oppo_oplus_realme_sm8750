@@ -381,7 +381,17 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
-          
+          - name: 应用 ceshibudin 补丁
+  run: |
+    echo "正在添加ceshibudin.patch补丁…"
+    cd kernel_workspace/common
+    # 下载补丁文件
+    wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/ceshibudin.patch?raw=true -O ceshibudin.patch
+    # 应用补丁，-F 3 允许3行上下文不匹配，失败不中断构建
+    patch -p1 -F 3 < ceshibudin.patch || true
+    # 可选：删除补丁文件节省空间
+    rm -f ceshibudin.patch
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |

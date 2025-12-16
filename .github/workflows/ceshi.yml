@@ -98,9 +98,9 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://codeload.github.com/RealmeOS/realme_GT7pro-AndroidB-common-source/zip/refs/heads/master -o common.zip && 
+          aria2c -s16 -x16 -k1M https://codeload.github.com/61307491/android_kernel_common_oneplus_sm8750-C15/zip/refs/heads/6.6.89-13T -o common.zip && 
           unzip -q common.zip && 
-          mv "realme_GT7pro-AndroidB-common-source-master" common &&
+          mv "android_kernel_common_oneplus_sm8750-C15-6.6.89-13T" common &&
           rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&

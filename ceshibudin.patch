@@ -1,0 +1,209 @@
+From b04a31af94ec3ca3018a3392ca684ee8e7497b4e Mon Sep 17 00:00:00 2001
+From: root <root@localhost>
+Date: Tue, 18 Nov 2025 23:59:41 +0800
+Subject: [PATCH] =?UTF-8?q?=E6=B7=BB=E5=8A=A0lxc=E6=94=AF=E6=8C=81?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ build.config.gki          | 19 ++++++++++++++++++-
+ fs/overlayfs/params.c     | 19 ++++++++-----------
+ fs/overlayfs/super.c      | 14 +-------------
+ fs/overlayfs/util.c       |  5 +----
+ include/linux/netdevice.h |  7 ++++---
+ include/linux/sched.h     |  9 +++++----
+ kernel/cgroup/cgroup.c    |  5 +++++
+ kernel/module/main.c      |  2 ++
+ kernel/module/version.c   |  2 +-
+ kernel/pid.c              | 11 ++++++++++-
+ 10 files changed, 55 insertions(+), 38 deletions(-)
+
+diff --git a/build.config.gki b/build.config.gki
+index 4b931d9eb3331..e38f387f8a71a 100644
+--- a/build.config.gki
++++ b/build.config.gki
+@@ -1,2 +1,19 @@
+ DEFCONFIG=gki_defconfig
+-POST_DEFCONFIG_CMDS="check_defconfig"
++POST_DEFCONFIG_CMDS="update_config"
++
++POST_DEFCONFIG_CMDS="update_config"
++
++function update_config() {
++    ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
++         -e CONFIG_POSIX_MQUEUE \
++         -e CONFIG_CGROUP_DEVICE \
++         -e CONFIG_SYSVIPC \
++         -e CONFIG_IPC_NS \
++         -e CONFIG_PID_NS \
++         -e CONFIG_USER_NS \
++         -e CONFIG_BTRFS_FS \
++         -e CONFIG_BTRFS_FS_POSIX_ACL \
++         -e CONFIG_TMPFS_XATTR
++    (cd ${OUT_DIR} && \
++     make ${TOOL_ARGS} O=${OUT_DIR} olddefconfig)
++}
+diff --git a/fs/overlayfs/params.c b/fs/overlayfs/params.c
+index 75b7e99be7a9d..90fb8b0a04ac7 100644
+--- a/fs/overlayfs/params.c
++++ b/fs/overlayfs/params.c
+@@ -286,21 +286,18 @@ static int ovl_mount_dir_check(struct fs_context *fc, const struct path *path,
+ 			       enum ovl_opt layer, const char *name, bool upper)
+ {
+ 	struct ovl_fs_context *ctx = fc->fs_private;
++	struct ovl_fs *ofs = fc->s_fs_info;
+ 
+ 	if (!d_is_dir(path->dentry))
+ 		return invalfc(fc, "%s is not a directory", name);
+ 
+-	/*
+-	 * Root dentries of case-insensitive capable filesystems might
+-	 * not have the dentry operations set, but still be incompatible
+-	 * with overlayfs.  Check explicitly to prevent post-mount
+-	 * failures.
+-	 */
+-	if (sb_has_encoding(path->mnt->mnt_sb))
+-		return invalfc(fc, "case-insensitive capable filesystem on %s not supported", name);
+-
+-	if (ovl_dentry_weird(path->dentry))
+-		return invalfc(fc, "filesystem on %s not supported", name);
++	if (sb_has_encoding(path->mnt->mnt_sb) || ovl_dentry_weird(path->dentry)) {
++		ofs->config.userxattr = true;
++		ofs->config.index = false;
++		ofs->config.redirect_mode = OVL_REDIRECT_NOFOLLOW;
++		ofs->config.xino = OVL_XINO_OFF;
++		ofs->config.metacopy = false;
++	}
+ 
+ 	/*
+ 	 * Check whether upper path is read-only here to report failures
+diff --git a/fs/overlayfs/super.c b/fs/overlayfs/super.c
+index 6cc6e594ec67b..0faa2baf38e49 100644
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -751,7 +751,7 @@ static int ovl_make_workdir(struct super_block *sb, struct ovl_fs *ofs,
+ 	/* Check if upper/work fs supports RENAME_WHITEOUT */
+ 	err = ovl_check_rename_whiteout(ofs);
+ 	if (err < 0)
+-		goto out;
++		err = 0;
+ 
+ 	rename_whiteout = err;
+ 	if (!rename_whiteout)
+@@ -795,18 +795,6 @@ static int ovl_make_workdir(struct super_block *sb, struct ovl_fs *ofs,
+ 		ovl_removexattr(ofs, ofs->workdir, OVL_XATTR_OPAQUE);
+ 	}
+ 
+-	/*
+-	 * We allowed sub-optimal upper fs configuration and don't want to break
+-	 * users over kernel upgrade, but we never allowed remote upper fs, so
+-	 * we can enforce strict requirements for remote upper fs.
+-	 */
+-	if (ovl_dentry_remote(ofs->workdir) &&
+-	    (!d_type || !rename_whiteout || ofs->noxattr)) {
+-		pr_err("upper fs missing required features.\n");
+-		err = -EINVAL;
+-		goto out;
+-	}
+-
+ 	/*
+ 	 * For volatile mount, create a incompat/volatile/dirty file to keep
+ 	 * track of it.
+diff --git a/fs/overlayfs/util.c b/fs/overlayfs/util.c
+index 6c60141fec4f5..fa452b2af7dfa 100644
+--- a/fs/overlayfs/util.c
++++ b/fs/overlayfs/util.c
+@@ -183,10 +183,7 @@ bool ovl_dentry_weird(struct dentry *dentry)
+ 	if (!d_can_lookup(dentry) && !d_is_file(dentry) && !d_is_symlink(dentry))
+ 		return true;
+ 
+-	return dentry->d_flags & (DCACHE_NEED_AUTOMOUNT |
+-				  DCACHE_MANAGE_TRANSIT |
+-				  DCACHE_OP_HASH |
+-				  DCACHE_OP_COMPARE);
++	return false;
+ }
+ 
+ enum ovl_path_type ovl_path_type(struct dentry *dentry)
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index ac4b8b828364a..25ca57c690f4c 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -2170,9 +2170,6 @@ struct net_device {
+ 	const struct iw_handler_def *wireless_handlers;
+ 	struct iw_public_data	*wireless_data;
+ 	const struct ethtool_ops *ethtool_ops;
+-#ifdef CONFIG_NET_L3_MASTER_DEV
+-	const struct l3mdev_ops	*l3mdev_ops;
+-#endif
+ #if IS_ENABLED(CONFIG_IPV6)
+ 	const struct ndisc_ops *ndisc_ops;
+ #endif
+@@ -2450,7 +2447,11 @@ struct net_device {
+ 	ANDROID_KABI_RESERVE(5);
+ 	ANDROID_KABI_RESERVE(6);
+ 	ANDROID_KABI_RESERVE(7);
++#if defined(CONFIG_NET_L3_MASTER_DEV)
++	ANDROID_KABI_USE(8, const struct l3mdev_ops	*l3mdev_ops;);
++#else
+ 	ANDROID_KABI_RESERVE(8);
++#endif
+ };
+ #define to_net_dev(d) container_of(d, struct net_device, dev)
+ 
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index dd6b1d58af014..601bb232460cc 100755
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1075,10 +1075,6 @@ struct task_struct {
+ 
+ 	struct nameidata		*nameidata;
+ 
+-#ifdef CONFIG_SYSVIPC
+-	struct sysv_sem			sysvsem;
+-	struct sysv_shm			sysvshm;
+-#endif
+ #ifdef CONFIG_DETECT_HUNG_TASK
+ 	unsigned long			last_switch_count;
+ 	unsigned long			last_switch_time;
+@@ -1520,9 +1516,14 @@ struct task_struct {
+ 	 */
+ 	struct callback_head		l1d_flush_kill;
+ #endif
++#if defined(CONFIG_SYSVIPC)
++	ANDROID_KABI_USE(1, struct sysv_sem sysvsem);
++	_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(2); ANDROID_KABI_RESERVE(3), struct sysv_shm sysvshm);
++#else
+ 	ANDROID_KABI_RESERVE(1);
+ 	ANDROID_KABI_RESERVE(2);
+ 	ANDROID_KABI_RESERVE(3);
++#endif
+ 	ANDROID_KABI_RESERVE(4);
+ 	ANDROID_KABI_RESERVE(5);
+ 	ANDROID_KABI_RESERVE(6);
+diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
+index 9cb68c924a2e0..04fd547040fc4 100644
+--- a/kernel/cgroup/cgroup.c
++++ b/kernel/cgroup/cgroup.c
+@@ -4261,6 +4261,11 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
+ 		spin_unlock_irq(&cgroup_file_kn_lock);
+ 	}
+ 
++	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) && !(cft->flags & CFTYPE_NO_PREFIX)) {
++				snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
++				kernfs_create_link(cgrp->kn, name, kn);
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/kernel/module/main.c b/kernel/module/main.c
+index ea1b4e1163898..b1a3510f30b0b 100644
+--- a/kernel/module/main.c
++++ b/kernel/module/main.c
+@@ -2900,6 +2900,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
+ 	if (err)
+ 		goto free_copy;
+ 
++	info->sig_

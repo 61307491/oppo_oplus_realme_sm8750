@@ -98,7 +98,27 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://codeload.github.com/61307491/android_kernel_common_oneplus_sm8750-C15/zip/refs/heads/6.6.89-13T -o common.zip && 
+          echo "正在克隆源码仓库（GitHub Actions适配版）..."
+# 方案：aria2c优先 + curl备用 + 原GitHub链接最终兜底，全程带超时/重试/兼容参数
+aria2c -s16 -x16 -k1M \
+  --max-tries=6 --retry-wait=4 --timeout=30 \
+  --no-check-certificate --allow-overwrite=true \
+  "https://42-56-79-194.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766476952&r=6ES2RN&bzc=2&bzs=313831323434313930333a32393537303631303a3239333838373239313a313831323434313930333a3130&ur=vaugvmnganlgvml&urn=1&s=1766476952d7d8b788717b417c1fbf8a4f3f9f79a3&bzp=0&bi=2808183566&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=6a994bad-63ec-439f-bc5e-e71310c979cf-584000&auto_redirect=1&ndcp=1&cache_type=1&xmfcid=4d217462-0f6e-4ea6-9491-e1857f13d9b3477c37a4399" \
+  -o common.zip || {
+    echo "aria2c下载失败，切换到curl重试..."
+    curl -L -k --retry 4 --retry-delay 3 --connect-timeout 20 --max-time 60 \
+      -o common.zip \
+      "https://42-56-79-194.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766476952&r=6ES2RN&bzc=2&bzs=313831323434313930333a32393537303631303a3239333838373239313a313831323434313930333a3130&ur=vaugvmnganlgvml&urn=1&s=1766476952d7d8b788717b417c1fbf8a4f3f9f79a3&bzp=0&bi=2808183566&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=6a994bad-63ec-439f-bc5e-e71310c979cf-584000&auto_redirect=1&ndcp=1&cache_type=1&xmfcid=4d217462-0f6e-4ea6-9491-e1857f13d9b3477c37a4399" || {
+      echo "curl下载也失败，使用原GitHub源码链接兜底..."
+      aria2c -s16 -x16 -k1M --max-tries=3 -o common.zip \
+        "https://codeload.github.com/61307491/android_kernel_common_oneplus_sm8750-C15/zip/refs/heads/6.6.89-13T"
+    }
+  } &&
+unzip -q common.zip &&
+# 适配新下载包的目录名（根据新链接的filename调整）
+mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
+rm -rf common.zip &
+
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-C15-6.6.89-13T" common &&
           rm -rf common.zip &

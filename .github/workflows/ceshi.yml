@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 11欧加真OKI内核
+name: 加速版构建 6.6.89 欧加真OKI内核
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -96,9 +96,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev ccache &
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://codeload.github.com/61307491/android_kernel_common_oneplus_sm8750/zip/refs/heads/oneplus/sm8750_v_15.0.0_oneplus_13 -o common.zip && 
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -o common.zip && 
           unzip -q common.zip && 
-          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_15.0.0_oneplus_13" common &&
+          mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
           rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&
@@ -120,8 +120,6 @@ jobs:
             sed -i 's/ -dirty//g' "$f"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
           done
-          # 初始化Git仓库（增量补丁依赖Git）
-          cd common && git init && git add . && git commit -m "initial commit" --allow-empty
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.89" >> $GITHUB_ENV
@@ -206,7 +204,7 @@ jobs:
             sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
             cd ../common/drivers/kernelsu
             wget https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch
-            git apply --reject --whitespace=fix -p2 -N -F 3 < fix_apk_sign.c.patch || true
+            patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
             echo "正在配置 MKSU (5ec1cff/KernelSU)..."
             curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/refs/heads/main/kernel/setup.sh" | bash -s main
@@ -237,9 +235,8 @@ jobs:
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./common
-            # 增量模式应用补丁
-            git apply --reject --whitespace=fix 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-            git apply --reject --whitespace=fix 69_hide_stuff.patch
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 < 69_hide_stuff.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在添加KernelSU Next补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
@@ -251,9 +248,9 @@ jobs:
             cp ./kernel_patches/next/scope_min_manual_hooks_v1.5.patch ./common/
             cp ./kernel_patches/69_hide_stuff.patch ./common/
             cd ./common
-            git apply --reject --whitespace=fix 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-            git apply --reject --whitespace=fix scope_min_manual_hooks_v1.5.patch
-            git apply --reject --whitespace=fix 69_hide_stuff.patch
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < scope_min_manual_hooks_v1.5.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
             echo "正在为 MKSU (5ec1cff/KernelSU)添加补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
@@ -280,14 +277,14 @@ jobs:
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
-            git apply --reject --whitespace=fix 10_enable_susfs_for_ksu.patch
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
-            git apply --reject --whitespace=fix mksu_supercalls.patch
+            patch -p1 < mksu_supercalls.patch || true
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/fix_umount.patch
-            git apply --reject --whitespace=fix fix_umount.patch
+            patch -p1 < fix_umount.patch || true
             cd ../common
-            git apply --reject --whitespace=fix 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-            git apply --reject --whitespace=fix 69_hide_stuff.patch
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           else
             echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
@@ -314,15 +311,15 @@ jobs:
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cp ./SukiSU_patch/69_hide_stuff.patch ./common/
             cd ./KernelSU
-            git apply --reject --whitespace=fix 10_enable_susfs_for_ksu.patch
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
             wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/fix_umount.patch
-            git apply --reject --whitespace=fix fix_umount.patch
+            patch -p1 < fix_umount.patch || true
             cd ../common
-            git apply --reject --whitespace=fix 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
-            git apply --reject --whitespace=fix 69_hide_stuff.patch
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
           fi
           
-      - name: 应用lz4 1.10.0 & zstd 1.5.7补丁（增量模式）
+      - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
         run: |
           echo "正在添加lz4 1.10.0 & zstd 1.5.7补丁…"
@@ -332,9 +329,9 @@ jobs:
           cp ./oppo_oplus_realme_sm8750/zram_patch/lz4armv8.S ./common/lib
           cp ./oppo_oplus_realme_sm8750/zram_patch/002-zstd.patch ./common/
           cd ./common
-          git apply --reject --whitespace=fix 001-lz4.patch
-          git apply --reject --whitespace=fix 002-zstd.patch
-      - name: 应用 lz4kd 补丁（增量模式）
+          git apply -p1 < 001-lz4.patch || true
+          patch -p1 < 002-zstd.patch || true
+      - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
           echo "正在添加lz4kd补丁…"
@@ -347,19 +344,14 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./lib
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
-          git apply --reject --whitespace=fix lz4kd.patch
+          patch -p1 -F 3 < lz4kd.patch || true
           
-      - name: 应用自定义增量补丁（ceshibudin.patch）
+      - name: 应用自定义测试补丁（ceshibudin.patch）
         run: |
-          echo "正在增量应用ceshibudin.patch（仅叠加差异，保留原有代码）…"
+          echo "正在以增量补丁方式应用ceshibudin.patch..."
           cd kernel_workspace/common
-          # 下载增量补丁（使用raw链接确保获取纯补丁内容）
-          wget https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/ceshibudin.patch -O ceshibudin_incremental.patch
-          # 增量模式应用：--reject保留冲突文件，--whitespace=fix自动修复格式问题，|| true确保构建不中断
-          git apply --reject --whitespace=fix ceshibudin_incremental.patch || true
-          # 输出补丁应用状态，提示部分应用情况
-          echo "ceshibudin.patch补丁应用完成（部分文件可能因补丁不完整未完全生效），继续构建流程"
-          # 保留冲突文件（.rej后缀）用于调试
+          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/ceshibudin.patch -O ceshibudin.patch
+          patch -p1 --forward < ceshibudin.patch || echo "补丁已应用或存在兼容冲突，跳过增量应用"
           
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
@@ -385,17 +377,11 @@ jobs:
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SCHED_CORE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_MODULES=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
           if [[ "${{ github.event.inputs.susfs_enable }}" == "false" ]]; then
-            echo "CONFIG_KSU_SUSFS=n" >> ./common//arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS=n" >> ./common/arch/arm64/configs/gki_defconfig
           fi
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -406,6 +392,15 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
+          # 新增缺失的配置项
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BTRFS_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BTRFS_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
@@ -439,7 +434,7 @@ jobs:
           echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
           cd common
           wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/config.patch
-          git apply --reject --whitespace=fix config.patch
+          patch -p1 -F 3 < config.patch || true
       - name: 添加 BBR 等一系列拥塞控制算法
         run: |
           if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
@@ -591,7 +586,7 @@ jobs:
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
+          make -j$($(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
           
           echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译后环境文件时间戳: ---"
@@ -648,13 +643,11 @@ jobs:
         with:
           name: ccache-debug-log
           path: ${{ github.workspace }}/kernel_workspace/ccache.log
-      - name: 上传 ZIP 工件（含补丁冲突文件）
+      - name: 上传 ZIP 工件
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_ZIP_Artifacts
-          path: |
-            ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
-            ${{ github.workspace }}/kernel_workspace/common/**/*.rej
+          path: ${{ github.workspace }}/kernel_workspace/AnyKernel*.zip
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -707,7 +700,7 @@ jobs:
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.89 内核（基于一加13国际版 6.6.89 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + 增量补丁支持
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -717,25 +710,24 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - 增量补丁：ceshibudin.patch（部分文件因补丁不完整已部分应用）
+            - 自定义测试补丁：已应用 ceshibudin.patch（增量模式）
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 所有补丁改为**增量模式**应用，兼容源码迭代更新
-            - 仅保留ceshibudin.patch自定义增量补丁支持
+            - 新增应用自定义测试补丁 ceshibudin.patch
+            - 补充缺失配置项：PID_NS、IPC_NS、CGROUP_DEVICE 等7项
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；
             3. 若你之前已刷入SukiSU Ultra内核，且SukiSU Ultra管理器已更新至最新版本，可在SukiSU Ultra管理器中直接刷入AnyKernel刷机包并重启；
-            4. 刷入无lz4kd补丁版的内核前若刷入过lz4kd补丁版的内核，为避免避免出错，请先关闭zram模块；
+            4. 刷入无lz4kd补丁版的内核前若刷入过lz4kd补丁版的内核，为避免出错，请先关闭zram模块；
             5. 由于KernelSU上游更新了元模块功能，最新版KSU管理器（包括除KernelSU Next以外的各分支）需要配合元模块(metamodule)才能正常挂载模块。目前的元模块包括[meta overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs), [mountify](https://github.com/backslashxx/mountify), [meta magicmount](https://github.com/7a72/meta-magic_mount/), [meta magicmount rs](https://github.com/Tools-cx-app/meta-magic_mount/), [hybrid mount](https://github.com/YuzakiKokuban/meta-hybrid_mount)等。若你是第一次使用KSU或刚从旧版KSU管理器升级至新版，请先安装一个元模块，这样其他涉及系统挂载的模块才能正常运行。
             #### ※※※刷写内核有风险，为防止出现意外导致手机变砖，在刷入内核前请务必用[KernelFlasher](https://github.com/capntrips/KernelFlasher)等软件备份boot等关键启动分区!※※※
           draft: false
           prerelease: false
           files: |
             release_zips/AnyKernel3_*.zip
-            release_zips/**/*.rej

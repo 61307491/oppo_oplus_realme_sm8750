@@ -98,9 +98,9 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://codeload.github.com/61307491/android_kernel_common_oneplus_sm8750-C15/zip/refs/heads/6.6.89-13T -o common.zip && 
+          aria2c -s16 -x16 -k1M https://codeload.github.com/RealmeOS/realme_GT7pro-AndroidB-common-source/zip/refs/heads/master -o common.zip && 
           unzip -q common.zip && 
-          mv "android_kernel_common_oneplus_sm8750-C15" common &&
+          mv "realme_GT7pro-AndroidB-common-source-master" common &&
           rm -rf common.zip &
           
           echo "正在克隆llvm-clang18工具链..." &&
@@ -116,7 +116,12 @@ jobs:
           
           wait
           echo "所有源码及llvm-Clang18工具链初始化完成！"
-          
+          echo "正在去除 ABI 保护 & 去除 dirty 后缀..."
+          rm common/android/abi_gki_protected_exports_* || true
+          for f in common/scripts/setlocalversion; do
+            sed -i 's/ -dirty//g' "$f"
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
+          done
       - name: 配置ccache目录
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_6.6.89" >> $GITHUB_ENV

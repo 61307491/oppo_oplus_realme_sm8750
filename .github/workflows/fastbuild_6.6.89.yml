@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 添加lxc配置欧加真OKI内核
+name: 加速版构建 6.6.89 33欧加真OKI内核
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
@@ -346,13 +346,15 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
           
-      - name: 应用 ceshibudin 补丁
+      - name: 应用自定义测试补丁（ceshibudin.patch & gkibuding.patch）
         run: |
-          echo "正在添加ceshibudin.patch补丁…"
+          echo "正在下载并应用ceshibudin.patch和gkibuding.patch补丁…"
           cd kernel_workspace/common
-          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/ceshibudin.patch?raw=true -O ceshibudin.patch
+          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/ceshibudin.patch -O ceshibudin.patch
           patch -p1 -F 3 < ceshibudin.patch || true
-          rm -f ceshibudin.patch
+          wget https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/gkibuding.patch -O gkibuding.patch
+          patch -p1 -F 3 < gkibuding.patch || true
+          rm -f ceshibudin.patch gkibuding.patch
           
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
@@ -378,21 +380,18 @@ jobs:
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # 新增核心配置项（用户指定）开始
-          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用 OverlayFS 文件系统
-          echo "CONFIG_NET_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用网络设备框架
-          echo "CONFIG_SCHED_CORE=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用进程调度核心
-          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用 Cgroup 资源管理
-          echo "CONFIG_MODULES=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用内核模块系统
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig  # 启用 PID 命名空间
-          # 新增核心配置项（用户指定）结束
+          echo "CONFIG_OVERLAY_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SCHED_CORE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MODULES=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
           if [[ ${{ github.event.inputs.kpm_enable }} == 'true' && ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
           if [[ "${{ github.event.inputs.susfs_enable }}" == "false" ]]; then
             echo "CONFIG_KSU_SUSFS=n" >> ./common/arch/arm64/configs/gki_defconfig
           fi
-          #添加对 Mountify (backslashxx/mountify) 模块的支持
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
@@ -402,65 +401,9 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
-          # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          #禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./common/build.config.gki
-          #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          
-          # 追加 LXC 和 Docker 相关配置
-          echo '
-#
-#      LXC and Docker Configurations
-#
-CONFIG_POSIX_MQUEUE=y
-CONFIG_PID_NS=y
-#CONFIG_SYSVIPC=y     not now
-CONFIG_IPC_NS=y
-CONFIG_CGROUP_DEVICE=y
-CONFIG_BRIDGE_NETFILTER=y
-CONFIG_NF_NAT_IPV4=y
-CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
-CONFIG_NF_NAT_NEEDED=y
-CONFIG_USER_NS=y
-CONFIG_CGROUP_PIDS=y
-CONFIG_CFQ_GROUP_IOSCHED=y
-CONFIG_NET_CLS_CGROUP=y
-CONFIG_IP_VS=y
-CONFIG_IP_VS_PROTO_TCP=y
-CONFIG_IP_VS_PROTO_UDP=y
-CONFIGCONFIG_IP_VS_NFCT=y
-CONFIG_VXLAN=y
-CONFIG_MACVLAN=y
-CONFIG_DEVPTS_MULTIPLE_INSTANCES=y
-CONFIG_NETFILTER_XT_MATCH_IPVS=y
-CONFIG_IP_VS_RR=y
-CONFIG_SECURITY_APPARMOR=y
-CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y
-CONFIG_FHANDLE=y
-CONFIG_UNIX_DIAG=y
-CONFIG_PACKET_DIAG=y
-CONFIG_NETLINK_DIAG=y
-CONFIG_NETFILTER_XT_MATCH_CGROUP=y
-CONFIG_RESOURCE_COUNTERS=y
-CONFIG_IOSCHED_CFQ=y
-CONFIG_CGROUP_PERF=y
-CONFIG_MEMCG_SWAP_ENABLED=y
-CONFIG_XFRM_ALGO=y
-CONFIG_AUFS_FS=y
-CONFIG_BTRFS_FS=y
-CONFIG_BTRFS_FS_POSIX_ACL=y
-CONFIG_DM_THIN_PROVISIONING=y
-CONFIG_NF_CONNMARK_IPV4=y
-CONFIG_NF_NAT_MASQUERADE_IPV4=y
-CONFIG_CGROUP_NET_CLASSID=y
-CONFIG_PERSISTENT_KEYRINGS=y
-CONFIG_ENCRYPTED_KEYS=y
-CONFIG_KEY_DH_OPERATIONS=y
-CONFIG_NET_L3_MASTER_DEV=y
-CONFIG_BRIDGE_VLAN_FILTERING=y
-CONFIG_IPVLAN=y' >> ./common/arch/arm64/configs/gki_defconfig
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
@@ -757,7 +700,7 @@ CONFIG_IPVLAN=y' >> ./common/arch/arm64/configs/gki_defconfig
             - 内核版本号: ${{ env.FULL_VERSION }}
             - 编译时间: ${{ env.TIME_FORM }}
             - 机型：欧加真骁龙8Elite通用 6.6.89 内核（基于一加13国际版 6.6.89 版官方OKI源码）
-            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核 + LXC/Docker 配置支持
+            - 特性：${{ env.KSU_TYPENAME }} + 风驰内核
             - susfs支持：${{ github.event.inputs.susfs_enable }}
             - KPM支持 (仅对sukisu生效)：${{ github.event.inputs.kpm_enable }}
             - LZ4支持：${{ github.event.inputs.lz4_enable }}
@@ -767,16 +710,14 @@ CONFIG_IPVLAN=y' >> ./common/arch/arm64/configs/gki_defconfig
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - 新增补丁：ceshibudin.patch（优化相关功能）
-            - 新增配置：LXC和Docker专用内核配置（支持容器化部署）
+            - 新增补丁：ceshibudin.patch + gkibuding.patch
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增ceshibudin.patch补丁支持
-            - 追加LXC和Docker专用内核配置，支持容器化应用部署
+            - 新增ceshibudin.patch和gkibuding.patch自定义补丁支持
             - (预留)
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

@@ -345,8 +345,7 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
-          
-      # 新增：增量应用ceshibudin补丁
+      
       - name: 增量应用ceshibudin补丁
         run: |
           echo "正在增量应用ceshibudin.patch（仅叠加差异，保留原有代码）…"
@@ -355,7 +354,7 @@ jobs:
           wget https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/ceshibudin.patch -O ceshibudin_incremental.patch
           # 增量应用补丁：-p1 保留路径结构，--forward 仅正向应用增量差异，避免回滚
           patch -p1 --forward < ceshibudin_incremental.patch || echo "部分补丁已应用或无需应用，继续构建"
-
+          
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -389,15 +388,6 @@ jobs:
           #添加对 Mountify (backslashxx/mountify) 模块的支持
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # 新增：补充缺失的CONFIG配置项
-          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_BTRFS_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_BTRFS_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # 原有配置项继续保留
           if [[ "${{ github.event.inputs.lz4kd_enable }}" == "true" ]]; then
             echo "CONFIG_ZSMALLOC=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_LZ4HC=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -405,9 +395,29 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
+          # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          #禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./common/build.config.gki
+          #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          # 核心配置项（原update_config函数强制启用的功能）
+          echo "CONFIG_POSIX_MQUEUE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SYSVIPC=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USER_NS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BTRFS_FS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BTRFS_FS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 必需依赖项（无自动补全时需手动添加，否则编译报错）
+          echo "CONFIG_NAMESPACES=y" >> ./common/arch/arm64/configs/gki_defconfig          # 命名空间基础依赖（支撑IPC_NS/PID_NS/USER_NS）
+          echo "CONFIG_MULTIUSER=y" >> ./common/arch/arm64/configs/gki_defconfig           # 多用户支持（USER_NS必需）
+          echo "CONFIG_CGROUPS=y" >> ./common/arch/arm64/configs/gki_defconfig             # cgroup基础（支撑CGROUP_DEVICE）
+          echo "CONFIG_CRYPTO=y" >> ./common/arch/arm64/configs/gki_defconfig              # 加密基础（BTRFS文件系统必需）
+          echo "CONFIG_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig               # 扩展属性基础（支撑BTRFS_FS_POSIX_ACL/TMPFS_XATTR）
+          echo "CONFIG_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig                 # 访问控制列表基础（支撑BTRFS_FS_POSIX_ACL）
+          echo "CONFIG_FILE_LOCKING=y" >> ./common/arch/arm64/configs/gki_defconfig        # 文件锁定（POSIX_MQUEUE/SYSVIPC必需）
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
@@ -685,7 +695,7 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             KSU_TYPENAME="SukiSU Ultra"
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
-            K KSU_TYPENAME="KernelSU Next"
+            KSU_TYPENAME="KernelSU Next"
           elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
             KSU_TYPENAME="MKSU"
           else
@@ -714,16 +724,16 @@ jobs:
             - ADIOS IO调度器支持：${{ github.event.inputs.adios_enable }}
             - Re-Kernel支持：${{ github.event.inputs.rekernel_enable }}
             - 内核级基带保护支持：${{ github.event.inputs.baseband_guard }}
-            - 新增：增量应用ceshibudin.patch补丁
-            - 新增：补充CONFIG_PID_NS等缺失配置项
+            - 增量补丁：已应用ceshibudin.patch（叠加差异）
+            - 新增配置：启用POSIX_MQUEUE、BTRFS_FS等核心功能及依赖项
             - SukiSU Ultra管理器下载：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
             - KernelSU Next管理器下载：[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases)
             - MKSU管理器下载：[Magic-KernelSU](https://github.com/5ec1cff/KernelSU/actions)
             - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
             ### ⏫️ 更新内容：
             - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-            - 新增增量补丁ceshibudin.patch支持
-            - 补充CONFIG_PID_NS、CONFIG_IPC_NS等缺失配置项
+            - 新增增量应用ceshibudin.patch，保留原有代码仅叠加差异
+            - 新增核心配置项：POSIX_MQUEUE、CGROUP_DEVICE、BTRFS_FS等及必需依赖项
             ### 📋 安装方法 | Installation Guide
             1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；
             2. 若你的手机之前已有 root 权限，可在手机上安装[HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher/releases)，在HorizonKernelFlasher中刷入AnyKernel刷机包并重启；

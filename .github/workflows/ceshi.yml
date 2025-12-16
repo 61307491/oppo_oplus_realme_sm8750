@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 欧加真OKI内核
+name: 加速版构建 6.6.89 欧加真OK22I内核
 
 env:
   TZ: Asia/Shanghai
@@ -101,7 +101,8 @@ jobs:
           #sudo apt-get install -y --no-install-recommends curl bison flex make binutils git perl gcc python3 python-is-python3 bc libssl-dev libelf-dev zip unzip ccache
           
           echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://42-56-79-194.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766468260&r=G7AL7S&bzc=2&bzs=313831323434313930333a32393537303630373a3239333838373239313a313831323434313930333a32&ur=vaugvmnganngvei&urn=1&s=176646826030fc3a2b55de06f318f8d4a4d85dc8da&bzp=0&bi=343688610&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=e05ee2be-6e56-448b-a100-af0919055d5a-6eaa77&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=c70c7b67-dc03-481b-8b0f-fe6618629000701daaef705 -o common.zip && 
+          aria2c -s16 -x16 -k1M "https://42-56-79-194.pd1.cjjd19.com/1135-vip-download-cdn.123295.com/123-549/b6d4da7c/1812441903-0/b6d4da7cd1a9cac0c4afd64b10c38225/c-m103?v=5&t=1766468260&r=G7AL7S&bzc=2&bzs=313831323434313930333a32393537303630373a3239333838373239313a313831323434313930333a32&ur=vaugvmnganngvei&urn=1&s=176646826030fc3a2b55de06f318f8d4a4d85dc8da&bzp=0&bi=343688610&filename=android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89.zip&x-mf-biz-cid=e05ee2be-6e56-448b-a100-af0919055d5a-6eaa77&auto_redirect=0&ndcp=1&cache_type=1&xmfcid=c70c7b67-dc03-481b-8b0f-fe6618629000701daaef705"
+ -o common.zip && 
           unzip -q common.zip && 
           mv "android_kernel_common_oneplus_sm8750-oneplus-sm8750_v_16.0.0_oneplus_13_6.6.89" common &&
           rm -rf common.zip &

@@ -438,41 +438,7 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-
-      - name: 启用 LXC / Container 支持（GKI-safe 子集）
-        run: |
-          # 这一段用于向 gki_defconfig 追加容器支持相关的内核配置，
-          # 我只开启 GKI允许的、安全的子集（namespaces/cgroups/overlay/veth/bridge/macvlan 等）
-          # 不会修改 ABI/export/syscall 等敏感区域，尽量避免与 KMI 冲突
-          cd kernel_workspace
-          CFG=./common/arch/arm64/configs/gki_defconfig
-          echo "# --- LXC / Container 支持（自动追加，GKI-safe 子集） ---" >> $CFG
-          # namespaces
-          echo "CONFIG_NAMESPACES=y" >> $CFG
-          echo "CONFIG_UTS_NS=y" >> $CFG
-          echo "CONFIG_IPC_NS=y" >> $CFG
-          echo "CONFIG_PID_NS=y" >> $CFG
-          echo "CONFIG_NET_NS=y" >> $CFG
-          echo "CONFIG_USER_NS=y" >> $CFG
-          # cgroups (常用子集)
-          echo "CONFIG_CGROUPS=y" >> $CFG
-          echo "CONFIG_CGROUP_CPUACCT=y" >> $CFG
-          echo "CONFIG_CGROUP_FREEZER=y" >> $CFG
-          echo "CONFIG_CGROUP_PIDS=y" >> $CFG
-          echo "CONFIG_MEMCG=y" >> $CFG
-          # 网络容器支持（veth/bridge/macvlan）
-          echo "CONFIG_VETH=y" >> $CFG
-          echo "CONFIG_BRIDGE=y" >> $CFG
-          echo "CONFIG_MACVLAN=y" >> $CFG
-          # overlayfs for container filesystems (常见且通常允许)
-          echo "CONFIG_OVERLAY_FS=y" >> $CFG
-          # 其他有用选项
-          echo "CONFIG_DEVPTS_MULTIPLE_INSTANCES=y" >> $CFG
-          echo "CONFIG_POSIX_MQUEUE=y" >> $CFG
-          # 保留注释以便后续审查
-          echo "# --- End LXC ---" >> $CFG
-          echo "已将 LXC 相关配置添加到 $CFG（仅追加，不修改其他文件）"
-
+          
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -615,7 +581,140 @@ jobs:
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
-           
+
+      - name: 启用 LXC 内核配置与 overlayfs 调整
+        run: |
+          set -e
+          cd kernel_workspace
+
+          # 写入覆盖版 build.config.gki（覆盖 common 下的同名文件）
+          cat > common/build.config.gki <<'EOF'
+# SPDX-License-Identifier: GPL-2.0
+#
+# Generic Kernel Image (GKI) build config
+#
+
+ARCH=arm64
+SUBARCH=arm64
+DEFCONFIG=gki_defconfig
+
+# ============================================================
+# Toolchain
+# ============================================================
+
+CLANG_TRIPLE=aarch64-linux-gnu-
+CROSS_COMPILE=${CLANG_TRIPLE}
+LLVM=1
+LLVM_IAS=1
+
+# ============================================================
+# Output
+# ============================================================
+
+OUT_DIR=${ROOT_DIR}/out
+DIST_DIR=${OUT_DIR}/dist
+
+# ============================================================
+# Post-defconfig commands
+# ============================================================
+
+POST_DEFCONFIG_CMDS="update_config"
+
+# ============================================================
+# Enable LXC / container kernel features
+# ============================================================
+
+function update_config() {
+    echo ">>> Enabling LXC kernel configs"
+
+    ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
+        -e CONFIG_NAMESPACES \
+        -e CONFIG_UTS_NS \
+        -e CONFIG_IPC_NS \
+        -e CONFIG_PID_NS \
+        -e CONFIG_USER_NS \
+        -e CONFIG_SYSVIPC \
+        -e CONFIG_POSIX_MQUEUE \
+        -e CONFIG_CGROUPS \
+        -e CONFIG_CGROUP_FREEZER \
+        -e CONFIG_CGROUP_DEVICE \
+        -e CONFIG_CGROUP_CPUACCT \
+        -e CONFIG_CGROUP_SCHED \
+        -e CONFIG_CPUSETS \
+        -e CONFIG_MEMCG \
+        -e CONFIG_KEYS \
+        -e CONFIG_NET_NS \
+        -e CONFIG_VETH \
+        -e CONFIG_BRIDGE \
+        -e CONFIG_BRIDGE_NETFILTER \
+        -e CONFIG_NETFILTER \
+        -e CONFIG_NETFILTER_XT_MATCH_COMMENT \
+        -e CONFIG_NETFILTER_XT_MATCH_CONNTRACK \
+        -e CONFIG_NETFILTER_XT_TARGET_MASQUERADE \
+        -e CONFIG_IP_NF_NAT \
+        -e CONFIG_IP_NF_FILTER \
+        -e CONFIG_OVERLAY_FS \
+        -e CONFIG_TMPFS \
+        -e CONFIG_TMPFS_XATTR \
+        -e CONFIG_EXT4_FS \
+        -e CONFIG_EXT4_FS_POSIX_ACL
+
+    echo ">>> Updating .config"
+    (cd ${OUT_DIR} && make ${TOOL_ARGS} O=${OUT_DIR} olddefconfig)
+}
+EOF
+
+          # 写入 overlayfs 的 params.c（创建目录并覆盖）
+          mkdir -p common/fs/overlayfs
+          cat > common/fs/overlayfs/params.c <<'EOF'
+// SPDX-License-Identifier: GPL-2.0
+#include <linux/fs.h>
+#include <linux/fs_context.h>
+#include <linux/namei.h>
+#include <linux/parser.h>
+#include <linux/seq_file.h>
+#include <linux/slab.h>
+#include <linux/xattr.h>
+#include "overlayfs.h"
+
+static int ovl_parse_opt(struct fs_context *fc, const char *name)
+{
+    struct ovl_fs *ofs = fc->fs_private;
+    struct path *path;
+
+    if (!strcmp(name, "lowerdir") ||
+        !strcmp(name, "upperdir") ||
+        !strcmp(name, "workdir")) {
+
+        path = ovl_get_layer(fc, name);
+        if (IS_ERR(path))
+            return PTR_ERR(path);
+
+        /*
+         * Android / LXC friendly behavior:
+         * Do not hard-fail on special or case-insensitive filesystems.
+         * Force safe overlay options instead.
+         */
+        if (sb_has_encoding(path->mnt->mnt_sb) ||
+            ovl_dentry_weird(path->dentry)) {
+
+            ofs->config.userxattr = true;
+            ofs->config.index = false;
+            ofs->config.redirect_mode = OVL_REDIRECT_NOFOLLOW;
+            ofs->config.xino = OVL_XINO_OFF;
+            ofs->config.metacopy = false;
+        }
+    }
+
+    return 0;
+}
+EOF
+
+          echo "==> build.config.gki and fs/overlayfs/params.c written/overwritten in kernel_workspace/common"
+          # 保留：不触发失败，以便后续步骤继续（除非 set -e 导致失败）
+          ls -l common/build.config.gki || true
+          ls -l common/fs/overlayfs/params.c || true
+
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
@@ -834,4 +933,4 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            release_zips/AnyKernel*.zip
+            release_zips/AnyKernel3_*.zip

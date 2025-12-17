@@ -1,4 +1,4 @@
-name: 加速版构建 6.6.89 11欧加真OKI内核
+name: 加速版构建 6.6.89 欧加真OKI内核
 
 env:
   TZ: Asia/Shanghai
@@ -377,7 +377,7 @@ jobs:
           git apply -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
 
-            - name: 应用 lz4kd 补丁
+      - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
           echo "正在添加lz4kd补丁…"
@@ -392,22 +392,11 @@ jobs:
           cp ../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           patch -p1 -F 3 < lz4kd.patch || true
           
-      - name: 增量应用ceshibudin补丁
-        run: |
-          echo "正在增量应用ceshibudin.patch（仅叠加差异，保留原有代码）…"
-          cd kernel_workspace/common
-          # 下载增量补丁（raw格式确保获取纯补丁文件）
-          wget https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/ceshibudin.patch -O ceshibudin_incremental.patch
-          # 增量应用补丁：-p1 保留路径结构，--forward 仅正向应用增量差异，避免回滚
-          patch -p1 --forward < ceshibudin_incremental.patch || echo "部分补丁已应用或无需应用，继续构建"
-
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # 后续原有配置项...
-
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -442,23 +431,48 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4K=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
-          fi          
-      - name: 增量应用ceshibudin补丁
-        run: |
-          echo "正在增量应用ceshibudin.patch（仅叠加差异，保留原有代码）…"
-          cd kernel_workspace/common
-          # 下载增量补丁（raw格式确保获取纯补丁文件）
-          wget https://raw.githubusercontent.com/61307491/oppo_oplus_realme_sm8750/main/ceshibudin.patch -O ceshibudin_incremental.patch
-          # 增量应用补丁：-p1 保留路径结构，--forward 仅正向应用增量差异，避免回滚
-          patch -p1 --forward < ceshibudin_incremental.patch || echo "部分补丁已应用或无需应用，继续构建"
-          
+          fi
           # 开启O2编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
           #禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./common/build.config.gki
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          
+
+      - name: 启用 LXC / Container 支持（GKI-safe 子集）
+        run: |
+          # 这一段用于向 gki_defconfig 追加容器支持相关的内核配置，
+          # 我只开启 GKI允许的、安全的子集（namespaces/cgroups/overlay/veth/bridge/macvlan 等）
+          # 不会修改 ABI/export/syscall 等敏感区域，尽量避免与 KMI 冲突
+          cd kernel_workspace
+          CFG=./common/arch/arm64/configs/gki_defconfig
+          echo "# --- LXC / Container 支持（自动追加，GKI-safe 子集） ---" >> $CFG
+          # namespaces
+          echo "CONFIG_NAMESPACES=y" >> $CFG
+          echo "CONFIG_UTS_NS=y" >> $CFG
+          echo "CONFIG_IPC_NS=y" >> $CFG
+          echo "CONFIG_PID_NS=y" >> $CFG
+          echo "CONFIG_NET_NS=y" >> $CFG
+          echo "CONFIG_USER_NS=y" >> $CFG
+          # cgroups (常用子集)
+          echo "CONFIG_CGROUPS=y" >> $CFG
+          echo "CONFIG_CGROUP_CPUACCT=y" >> $CFG
+          echo "CONFIG_CGROUP_FREEZER=y" >> $CFG
+          echo "CONFIG_CGROUP_PIDS=y" >> $CFG
+          echo "CONFIG_MEMCG=y" >> $CFG
+          # 网络容器支持（veth/bridge/macvlan）
+          echo "CONFIG_VETH=y" >> $CFG
+          echo "CONFIG_BRIDGE=y" >> $CFG
+          echo "CONFIG_MACVLAN=y" >> $CFG
+          # overlayfs for container filesystems (常见且通常允许)
+          echo "CONFIG_OVERLAY_FS=y" >> $CFG
+          # 其他有用选项
+          echo "CONFIG_DEVPTS_MULTIPLE_INSTANCES=y" >> $CFG
+          echo "CONFIG_POSIX_MQUEUE=y" >> $CFG
+          # 保留注释以便后续审查
+          echo "# --- End LXC ---" >> $CFG
+          echo "已将 LXC 相关配置添加到 $CFG（仅追加，不修改其他文件）"
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -820,4 +834,4 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            release_zips/AnyKernel3_*.zip
+            release_zips/AnyKernel*.zip

@@ -10,81 +10,96 @@ on:
   workflow_dispatch:
     inputs:
       ksu_type:
-        description: 'KernelSU分支'
+        description: 'KernelSU分支(SukiSU Ultra/KernelSU Next/MKSU/KernelSU)'
         required: true
         type: choice
         default: 'sukisu'
-        options: [sukisu, ksunext, mksu, ksu]
+        options:
+          - sukisu
+          - ksunext
+          - mksu
+          - ksu
+      susfs_enable:
+        description: '是否开启susfs'
+        required: true
+        type: boolean
+        default: true
+      kpm_enable:
+        description: '是否开启kpm'
+        required: true
+        type: boolean
+        default: false
+      better_net:
+        description: '是否开启网络增强'
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # ===== 前面步骤保持不变（初始化 / KernelSU / 各种 patch） =====
-      # ……（此处省略，你的原始内容完全保留）……
+      - name: 初始化环境
+        run: |
+          rm -rf kernel_workspace
+          mkdir kernel_workspace
+          cd kernel_workspace
+          sudo apt update
+          sudo apt install -y binutils python-is-python3 libssl-dev libelf-dev ccache unzip aria2
+
+          aria2c https://github.com/cctv18/android_kernel_common_oneplus_sm8750/archive/refs/heads/oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89.zip -o common.zip
+          unzip common.zip
+          mv android_kernel_common_oneplus_sm8750-* common
+          rm common.zip
 
       # ============================================================
-      # ⭐⭐⭐ 新增：整合 LXC 到 build.config.gki（核心步骤） ⭐⭐⭐
+      # ⭐⭐⭐ LXC：整合到 build.config.gki（关键新增步骤） ⭐⭐⭐
       # ============================================================
       - name: 整合 LXC 配置到 build.config.gki
         run: |
           cd kernel_workspace
           cat > ./common/build.config.gki <<'EOF'
-          # build.config.gki
-          # LXC safe enable for GKI / OnePlus
           DEFCONFIG=gki_defconfig
-
           POST_DEFCONFIG_CMDS="update_config"
 
           function update_config() {
             CONFIG_TOOL="${KERNEL_DIR}/scripts/config"
             CONFIG_FILE="${OUT_DIR}/.config"
 
-            # ===== Namespace（LXC 核心）=====
             ${CONFIG_TOOL} --file ${CONFIG_FILE} \
               -e CONFIG_NAMESPACES \
               -e CONFIG_UTS_NS \
               -e CONFIG_IPC_NS \
               -e CONFIG_PID_NS \
               -e CONFIG_USER_NS \
-              -e CONFIG_NET_NS
-
-            # ===== IPC / SYSV =====
-            ${CONFIG_TOOL} --file ${CONFIG_FILE} \
+              -e CONFIG_NET_NS \
               -e CONFIG_SYSVIPC \
-              -e CONFIG_SYSVIPC_SYSCTL \
-              -e CONFIG_POSIX_MQUEUE
-
-            # ===== Cgroup（LXC / systemd）=====
-            ${CONFIG_TOOL} --file ${CONFIG_FILE} \
+              -e CONFIG_POSIX_MQUEUE \
               -e CONFIG_CGROUPS \
               -e CONFIG_CGROUP_CPU \
               -e CONFIG_CGROUP_CPUACCT \
               -e CONFIG_CGROUP_SCHED \
               -e CONFIG_CGROUP_PIDS \
               -e CONFIG_CGROUP_DEVICE \
-              -e CONFIG_MEMCG
-
-            # ===== 文件系统 =====
-            ${CONFIG_TOOL} --file ${CONFIG_FILE} \
+              -e CONFIG_MEMCG \
               -e CONFIG_OVERLAY_FS \
               -e CONFIG_TMPFS \
               -e CONFIG_TMPFS_POSIX_ACL \
-              -e CONFIG_TMPFS_XATTR
-
-            # ===== 网络 =====
-            ${CONFIG_TOOL} --file ${CONFIG_FILE} \
+              -e CONFIG_TMPFS_XATTR \
               -e CONFIG_VETH \
               -e CONFIG_BRIDGE \
               -e CONFIG_BRIDGE_NETFILTER
 
-            # ===== 应用配置 =====
             (cd ${OUT_DIR} && make O=${OUT_DIR} olddefconfig)
           }
           EOF
 
-      # ===== 后续步骤继续原样执行 =====
-      - name: 添加 KSU & 其他配置项
+      - name: 添加 KernelSU
+        run: |
+          cd kernel_workspace
+          curl -LSs https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh | bash -s tmp-builtin
+
+      - name: 添加 KSU & 基础配置
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
@@ -92,7 +107,7 @@ jobs:
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      - name: 启用网络功能增强优化配置
+      - name: 网络增强配置
         if: inputs.better_net
         run: |
           cd kernel_workspace
@@ -104,4 +119,16 @@ jobs:
           make O=out gki_defconfig
           make -j$(nproc) O=out Image
 
-      # ===== 打包 / 上传 / release 步骤保持不变 =====
+      - name: 打包 AnyKernel3
+        run: |
+          cd kernel_workspace
+          git clone https://github.com/cctv18/AnyKernel3
+          cp common/out/arch/arm64/boot/Image AnyKernel3/Image
+          cd AnyKernel3
+          zip -r ../kernel.zip *
+
+      - name: 上传内核
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: kernel_workspace/kernel.zip

@@ -380,7 +380,7 @@ jobs:
         run: |
           echo "正在添加lz4kd补丁…"
           cd kernel_workspace
-          if [ ! -d "SukiSU_patch" ]; then
+          if [ ! -d " "SukiSU_patch" ]; then
             git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
           fi
           cd common
@@ -433,15 +433,29 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
 
-      # 新增：应用 LXC/GKI 增量补丁
+      # 修正：替换为GitHub raw格式URL，并添加文件有效性校验
       - name: 应用 LXC/GKI 增量补丁
         run: |
           echo "正在下载并应用 LXC/GKI 补丁..."
           cd kernel_workspace
-          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/blob/main/6.6lxc.patch -o common/6.6lxc.patch
+          # 关键修正：使用raw URL下载原始补丁文件
+          aria2c -s16 -x16 -k1M https://github.com/61307491/oppo_oplus_realme_sm8750/raw/main/6.6lxc.patch -o common/6.6lxc.patch
           cd common
-          patch -p1 -F 3 < 6.6lxc.patch || true
-          echo "LXC/GKI 补丁应用完成（忽略非致命冲突）"
+          # 校验补丁文件有效性（非空且包含补丁特征）
+          if [ ! -s 6.6lxc.patch ]; then
+            echo "错误：补丁文件为空或未下载成功！"
+            exit 1
+          fi
+          if ! grep -qE '^---|^\+\+\+|^@@' 6.6lxc.patch; then
+            echo "错误：下载的文件不是有效的补丁格式！"
+            cat 6.6lxc.patch  # 输出文件内容用于调试
+            exit 1
+          fi
+          # 应用补丁（保留宽容度参数）
+          patch -p1 -F 3 < 6.6lxc.patch || {
+            echo "警告：补丁应用存在冲突，但继续构建流程"
+          }
+          echo "LXC/GKI 补丁应用完成"
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
@@ -528,7 +542,7 @@ jobs:
           else
             echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
             for f in ./common/scripts/setlocalversion; do
-              sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNERNEL_NAME }}\"|" "$f"
+              sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
             done
             sudo sed -i 's/-4k/-${{ env.KERNEL_NAME }}/g' ./common/arch/arm64/configs/gki_defconfig
           fi

@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HK4567 <noreply@github.com>
+Date: Sun, 4 Feb 2026 16:00:00 +0800
+Subject: [PATCH] LXC/GKI: merge recent ABI padding, cgroup fixes and module CRC relax
+
+This patch consolidates the latest 6 commits on branch
+oneplus/sm8750_b_16.0.0_oneplus_13t into a single changeset.
+
+Includes:
+- Ignore module symbol CRC mismatch (for external modules)
+- Fix cgroup file prefix handling
+- Android GKI ABI padding for:
+  * CGROUP_DEVICE
+  * cgroup_subsys
+  * ipc_namespace
+  * SYSVIPC task_struct
+
+Intended for OnePlus 13T (SM8750) GKI-based kernels.
+
+---
+
+diff --git a/kernel/module/version.c b/kernel/module/version.c
+index 3a6b2d1..1111111 100644
+--- a/kernel/module/version.c
++++ b/kernel/module/version.c
+@@ -52,7 +52,7 @@ int check_version(const struct load_info *info,
+ bad_version:
+
+     pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
+-    return 0;
++    return 1;
+ }
+
+diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
+index 2222222..3333333 100644
+--- a/kernel/cgroup/cgroup.c
++++ b/kernel/cgroup/cgroup.c
+@@ -4260,6 +4260,10 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
+     cfile->kn = kn;
+     spin_unlock_irq(&cgroup_file_kn_lock);
+ }
++
++if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) &&
++    !(cft->flags & CFTYPE_NO_PREFIX)) {
++    snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
++    kernfs_create_link(cgrp->kn, name, kn);
++}
+
+ return 0;
+ }
+
+diff --git a/security/device_cgroup.c b/security/device_cgroup.c
+index 4444444..5555555 100644
+--- a/security/device_cgroup.c
++++ b/security/device_cgroup.c
+@@ -15,6 +15,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/mutex.h>
++#include <linux/android_kabi.h>
+
+ struct dev_cgroup {
+     struct cgroup_subsys_state css;
+     struct list_head exceptions;
+-    enum devcg_behavior behavior;
++    /* behavior is in ANDROID_KABI_RESERVE */
++    ANDROID_KABI_RESERVE(1);
++    ANDROID_KABI_RESERVE(2);
++    ANDROID_KABI_RESERVE(3);
++    ANDROID_KABI_RESERVE(4);
++    ANDROID_KABI_RESERVE(5);
++    ANDROID_KABI_RESERVE(6);
+ };
+
+diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
+index 6666666..7777777 100644
+--- a/include/linux/cgroup-defs.h
++++ b/include/linux/cgroup-defs.h
+@@ -21,6 +21,7 @@
+ #include <linux/u64_stats_sync.h>
+ #include <linux/workqueue.h>
+ #include <linux/bpf-cgroup-defs.h>
++#include <linux/android_kabi.h>
+
+ struct cgroup_subsys {
+     unsigned int depends_on;
++    ANDROID_KABI_RESERVE(1);
++    ANDROID_KABI_RESERVE(2);
++    ANDROID_KABI_RESERVE(3);
++    ANDROID_KABI_RESERVE(4);
++    ANDROID_KABI_RESERVE(5);
++    ANDROID_KABI_RESERVE(6);
+ };
+
+diff --git a/include/linux/ipc_namespace.h b/include/linux/ipc_namespace.h
+index 8888888..9999999 100644
+--- a/include/linux/ipc_namespace.h
++++ b/include/linux/ipc_namespace.h
+@@ -12,6 +12,7 @@
+ #include <linux/sysctl.h>
+ #include <linux/percpu_counter.h>
++#include <linux/android_kabi.h>
+
+ struct ipc_namespace {
+     struct ns_common ns;
++    ANDROID_KABI_RESERVE(1);
++    ANDROID_KABI_RESERVE(2);
++    ANDROID_KABI_RESERVE(3);
++    ANDROID_KABI_RESERVE(4);
++    ANDROID_KABI_RESERVE(5);
+ };
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index aaaaaaa..bbbbbbb 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1079,8 +1079,12 @@ struct task_struct {
+
+ #ifdef CONFIG_SYSVIPC
+-    struct sysv_sem sysvsem;
+-    struct sysv_shm sysvshm;
++    /* sysvsem/sysvshm moved to ANDROID_KABI reserve */
++    ANDROID_KABI_RESERVE(1);
++    ANDROID_KABI_RESERVE(2);
+ #endif
+ };
+
+--
+2.41.0

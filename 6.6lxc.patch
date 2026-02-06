@@ -1,78 +1,88 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: HK4567 <noreply@github.com>
-Date: Sun, 4 Feb 2026 16:00:00 +0800
-Subject: [PATCH] LXC/GKI: merge recent ABI padding, cgroup fixes and module CRC relax
+From 9c66b9bf623306d5686f347eead1829415a3d927 Mon Sep 17 00:00:00 2001
+From: HK4567 <3144114919@qq.com>
+Date: Sun, 1 Feb 2026 20:32:21 +0800
+Subject: [PATCH 1/5] Subject: [PATCH] ANDROID: GKI: use Android ABI padding
+ for ipc_namespace  struct
 
-This patch consolidates the latest 6 commits on branch
-oneplus/sm8750_b_16.0.0_oneplus_13t into a single changeset.
+This allows enabling CONFIG_SYSVIPC=y without breaking module ABI.
 
-Includes:
-- Ignore module symbol CRC mismatch (for external modules)
-- Fix cgroup file prefix handling
-- Android GKI ABI padding for:
-  * CGROUP_DEVICE
-  * cgroup_subsys
-  * ipc_namespace
-  * SYSVIPC task_struct
+The ipc_namespace struct is part of the kernel ABI and gets populated
+with SYSVIPC-specific fields (ids, sem_ctls, msg_*, shm_*) when
+CONFIG_SYSVIPC is enabled. Without ABI padding, enabling this config
+option breaks module ABI compatibility with vendor modules.
 
-Intended for OnePlus 13T (SM8750) GKI-based kernels.
+Without this patch, enabling CONFIG_SYSVIPC can cause ABI incompatibility
+on Android 14 GKI kernels with 6.1.
 
+This patch complements the existing task_struct padding patch to provide
+complete ABI stability for SYSVIPC.
+
+Change-Id: Id9e2a3b1f5c7e8f4a6d2b9c8e7f3a5d1b4c6e8a2
+Signed-off-by: GitHub Copilot <noreply@github.com>
+
+From d9e2a3b1f5c7e8f4a6d2b9c8e7f3a5d1b4c6e8a2 Mon Sep 17 00:00:00 2001
+From: GitHub Copilot <noreply@github.com>
+Date: Sat, 25 Jan 2026 00:30:00 +0000
 ---
+ include/linux/ipc_namespace.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
 
-diff --git a/kernel/module/version.c b/kernel/module/version.c
-index 3a6b2d1..1111111 100644
---- a/kernel/module/version.c
-+++ b/kernel/module/version.c
-@@ -52,7 +52,7 @@ int check_version(const struct load_info *info,
- bad_version:
-
-     pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
--    return 0;
-+    return 1;
- }
-
-diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
-index 2222222..3333333 100644
---- a/kernel/cgroup/cgroup.c
-+++ b/kernel/cgroup/cgroup.c
-@@ -4260,6 +4260,10 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
-     cfile->kn = kn;
-     spin_unlock_irq(&cgroup_file_kn_lock);
- }
-+
-+if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) &&
-+    !(cft->flags & CFTYPE_NO_PREFIX)) {
-+    snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
-+    kernfs_create_link(cgrp->kn, name, kn);
-+}
-
- return 0;
- }
-
-diff --git a/security/device_cgroup.c b/security/device_cgroup.c
-index 4444444..5555555 100644
---- a/security/device_cgroup.c
-+++ b/security/device_cgroup.c
-@@ -15,6 +15,7 @@
- #include <linux/rcupdate.h>
- #include <linux/mutex.h>
+diff --git a/include/linux/ipc_namespace.h b/include/linux/ipc_namespace.h
+index e8240cf2611ad..f16c23fde00ff 100644
+--- a/include/linux/ipc_namespace.h
++++ b/include/linux/ipc_namespace.h
+@@ -12,6 +12,7 @@
+ #include <linux/rhashtable-types.h>
+ #include <linux/sysctl.h>
+ #include <linux/percpu_counter.h>
 +#include <linux/android_kabi.h>
+ 
+ struct user_namespace;
+ 
+@@ -78,6 +79,13 @@ struct ipc_namespace {
+ 	struct llist_node mnt_llist;
+ 
+ 	struct ns_common ns;
++
++	ANDROID_KABI_RESERVE(1);
++	ANDROID_KABI_RESERVE(2);
++	ANDROID_KABI_RESERVE(3);
++	ANDROID_KABI_RESERVE(4);
++	ANDROID_KABI_RESERVE(5);
++	ANDROID_KABI_RESERVE(6);
+ } __randomize_layout;
+ 
+ extern struct ipc_namespace init_ipc_ns;
 
- struct dev_cgroup {
-     struct cgroup_subsys_state css;
-     struct list_head exceptions;
--    enum devcg_behavior behavior;
-+    /* behavior is in ANDROID_KABI_RESERVE */
-+    ANDROID_KABI_RESERVE(1);
-+    ANDROID_KABI_RESERVE(2);
-+    ANDROID_KABI_RESERVE(3);
-+    ANDROID_KABI_RESERVE(4);
-+    ANDROID_KABI_RESERVE(5);
-+    ANDROID_KABI_RESERVE(6);
- };
+From 01cce44a3bd97c2290984af16fc60f78422e44cd Mon Sep 17 00:00:00 2001
+From: HK4567 <3144114919@qq.com>
+Date: Sun, 1 Feb 2026 20:33:27 +0800
+Subject: [PATCH 2/5] Subject: [PATCH] ANDROID: GKI: use Android ABI padding
+ for cgroup_subsys  struct
+
+This allows enabling CONFIG_CGROUP_DEVICE=y and other cgroup subsystems
+without breaking module ABI.
+
+The cgroup_subsys struct is part of the kernel ABI. When new cgroup
+subsystems are enabled (like CONFIG_CGROUP_DEVICE), they get registered
+in the cgroup_subsys array, which can cause ABI breakage for vendor
+modules that reference cgroup subsystem structures.
+
+Without this patch, enabling CONFIG_CGROUP_DEVICE causes kernel panics
+on Android 14 GKI kernels with 6.1 due to ABI incompatibility.
+
+Change-Id: Ic8a7e9f2d1b4a3e6f5c8d9a7b2e4f1c3d5a6b8e9
+Signed-off-by: GitHub Copilot <noreply@github.com>
+
+From c8a7e9f2d1b4a3e6f5c8d9a7b2e4f1c3d5a6b8e9 Mon Sep 17 00:00:00 2001
+From: GitHub Copilot <noreply@github.com>
+Date: Sat, 25 Jan 2026 00:25:00 +0000
+---
+ include/linux/cgroup-defs.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
 
 diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
-index 6666666..7777777 100644
+index 87c57b18b899b..e2406422de224 100644
 --- a/include/linux/cgroup-defs.h
 +++ b/include/linux/cgroup-defs.h
 @@ -21,6 +21,7 @@
@@ -80,49 +90,143 @@ index 6666666..7777777 100644
  #include <linux/workqueue.h>
  #include <linux/bpf-cgroup-defs.h>
 +#include <linux/android_kabi.h>
-
- struct cgroup_subsys {
-     unsigned int depends_on;
-+    ANDROID_KABI_RESERVE(1);
-+    ANDROID_KABI_RESERVE(2);
-+    ANDROID_KABI_RESERVE(3);
-+    ANDROID_KABI_RESERVE(4);
-+    ANDROID_KABI_RESERVE(5);
-+    ANDROID_KABI_RESERVE(6);
+ #include <linux/psi_types.h>
+ 
+ #ifdef CONFIG_CGROUPS
+@@ -771,6 +772,13 @@ struct cgroup_subsys {
+ 	 * specifies the mask of subsystems that this one depends on.
+ 	 */
+ 	unsigned int depends_on;
++
++	ANDROID_KABI_RESERVE(1);
++	ANDROID_KABI_RESERVE(2);
++	ANDROID_KABI_RESERVE(3);
++	ANDROID_KABI_RESERVE(4);
++	ANDROID_KABI_RESERVE(5);
++	ANDROID_KABI_RESERVE(6);
  };
+ 
+ extern struct percpu_rw_semaphore cgroup_threadgroup_rwsem;
 
-diff --git a/include/linux/ipc_namespace.h b/include/linux/ipc_namespace.h
-index 8888888..9999999 100644
---- a/include/linux/ipc_namespace.h
-+++ b/include/linux/ipc_namespace.h
-@@ -12,6 +12,7 @@
- #include <linux/sysctl.h>
- #include <linux/percpu_counter.h>
+From 2329f7b1d79bf69345dd1b39c0efcc34f6128283 Mon Sep 17 00:00:00 2001
+From: HK4567 <3144114919@qq.com>
+Date: Sun, 1 Feb 2026 20:34:33 +0800
+Subject: [PATCH 3/5] Subject: [PATCH] ANDROID: GKI: use Android ABI padding
+ for CGROUP_DEVICE  dev_cgroup fields
+
+This allows to enable CONFIG_CGROUP_DEVICE=y without breaking module ABI.
+
+The dev_cgroup structure is part of the kernel ABI and needs padding
+to prevent kernel panics when CONFIG_CGROUP_DEVICE is enabled.
+
+Without this patch, enabling CONFIG_CGROUP_DEVICE causes bootloops
+and kernel panics on Android 14 GKI kernels with 6.1.
+
+This patch follows the same pattern as:
+- 0ac686b9e81ba331c2ad9b420fd21262a80daaa4 (SYSVIPC ABI padding)
+- a0aa446ca326b5d26ac1dec057efd8c07d2bcbff (POSIX_MQUEUE ABI padding)
+
+Change-Id: Ie8f6c8d4b2a9f1e3c5d7a6b8e9f2c4d1a3b5e7f9
+Signed-off-by: GitHub Copilot <noreply@github.com>
+
+From e8f6c8d4b2a9f1e3c5d7a6b8e9f2c4d1a3b5e7f9 Mon Sep 17 00:00:00 2001
+From: GitHub Copilot <noreply@github.com>
+Date: Fri, 24 Jan 2026 13:00:00 +0000
+---
+ security/device_cgroup.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/security/device_cgroup.c b/security/device_cgroup.c
+index dc4df7475081c..bd8dea10e15ad 100644
+--- a/security/device_cgroup.c
++++ b/security/device_cgroup.c
+@@ -15,6 +15,7 @@
+ #include <linux/slab.h>
+ #include <linux/rcupdate.h>
+ #include <linux/mutex.h>
 +#include <linux/android_kabi.h>
-
- struct ipc_namespace {
-     struct ns_common ns;
-+    ANDROID_KABI_RESERVE(1);
-+    ANDROID_KABI_RESERVE(2);
-+    ANDROID_KABI_RESERVE(3);
-+    ANDROID_KABI_RESERVE(4);
-+    ANDROID_KABI_RESERVE(5);
+ 
+ #ifdef CONFIG_CGROUP_DEVICE
+ 
+@@ -43,7 +44,20 @@ struct dev_exception_item {
+ struct dev_cgroup {
+ 	struct cgroup_subsys_state css;
+ 	struct list_head exceptions;
+-	enum devcg_behavior behavior;
++	// enum devcg_behavior behavior;
++	/* behavior is in the ANDROID_KABI_USE(1) field below */
++
++#if defined(CONFIG_CGROUP_DEVICE)
++	ANDROID_KABI_USE(1, enum devcg_behavior behavior);
++	ANDROID_KABI_RESERVE(2);
++	ANDROID_KABI_RESERVE(3);
++	ANDROID_KABI_RESERVE(4);
++#else
++	ANDROID_KABI_RESERVE(1);
++	ANDROID_KABI_RESERVE(2);
++	ANDROID_KABI_RESERVE(3);
++	ANDROID_KABI_RESERVE(4);
++#endif
  };
+ 
+ static inline struct dev_cgroup *css_to_devcgroup(struct cgroup_subsys_state *s)
 
-diff --git a/include/linux/sched.h b/include/linux/sched.h
-index aaaaaaa..bbbbbbb 100644
---- a/include/linux/sched.h
-+++ b/include/linux/sched.h
-@@ -1079,8 +1079,12 @@ struct task_struct {
+From 17338eeb8986b04e32447ef1f749255522eea007 Mon Sep 17 00:00:00 2001
+From: HK4567 <3144114919@qq.com>
+Date: Sun, 1 Feb 2026 20:36:06 +0800
+Subject: [PATCH 4/5] Subject: [PATCH] cgroup: fix cgroup prefix
 
- #ifdef CONFIG_SYSVIPC
--    struct sysv_sem sysvsem;
--    struct sysv_shm sysvshm;
-+    /* sysvsem/sysvshm moved to ANDROID_KABI reserve */
-+    ANDROID_KABI_RESERVE(1);
-+    ANDROID_KABI_RESERVE(2);
- #endif
- };
+From a72032ecf33c63d8a4abb64b08c1a0b847c82a32 Mon Sep 17 00:00:00 2001
+From: lateautumn233 <lateautumn233@foxmail.com>
+Date: Fri, 21 Jul 2023 21:30:41 +0800
+---
+ kernel/cgroup/cgroup.c | 4 ++++
+ 1 file changed, 4 insertions(+)
 
---
-2.41.0
+diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
+index 9cb68c924a2e0..ba57daec85ad4 100644
+--- a/kernel/cgroup/cgroup.c
++++ b/kernel/cgroup/cgroup.c
+@@ -4260,6 +4260,10 @@ static int cgroup_add_file(struct cgroup_subsys_state *css, struct cgroup *cgrp,
+ 		cfile->kn = kn;
+ 		spin_unlock_irq(&cgroup_file_kn_lock);
+ 	}
++	if (cft->ss && (cgrp->root->flags & CGRP_ROOT_NOPREFIX) && !(cft->flags & CFTYPE_NO_PREFIX)) {
++				snprintf(name, CGROUP_FILE_NAME_MAX, "%s.%s", cft->ss->name, cft->name);
++				kernfs_create_link(cgrp->kn, name, kn);
++	}
+ 
+ 	return 0;
+ }
+
+From b1b8fba1577a46858b15a9c43c3e84c5a5ed8b4d Mon Sep 17 00:00:00 2001
+From: HK4567 <3144114919@qq.com>
+Date: Sun, 1 Feb 2026 22:52:48 +0800
+Subject: [PATCH 5/5] Subject: [PATCH] kernel/module/version.c: Ignore symbols
+ crc check
+
+Updated for kernel 6.1+ where module code is in kernel/module/ directory.
+
+Change-Id: I1ec2933c8bf1ffd970a6c07fbe8b56636d67825f
+Signed-off-by: lateautumn233 <lateautumn233@foxmail.com>
+
+From 750b43051d2e4317121c7250544ae38fdf28d4c7 Mon Sep 17 00:00:00 2001
+From: zzh-zzh-zzh <1292882190@qq.com>
+Date: Fri, 10 Feb 2023 23:09:44 +0800
+---
+ kernel/module/version.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/module/version.c b/kernel/module/version.c
+index 53f43ac5a73e9..56a6c6bf1f7b4 100644
+--- a/kernel/module/version.c
++++ b/kernel/module/version.c
+@@ -52,7 +52,7 @@ int check_version(const struct load_info *info,
+ 
+ bad_version:
+ 	pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
+-	return 0;
++	return 1;
+ }
+ 
+ int check_modstruct_version(const struct load_info *info,
